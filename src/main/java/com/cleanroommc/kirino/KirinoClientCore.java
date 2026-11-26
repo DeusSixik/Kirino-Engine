@@ -1,6 +1,8 @@
 package com.cleanroommc.kirino;
 
+import com.cleanroommc.common.CleanroomEnvironment;
 import com.cleanroommc.kirino.config.KirinoConfig;
+import com.cleanroommc.kirino.debug.ecs.EcsDebugCommand;
 import com.cleanroommc.kirino.ecs.api.component.scan.event.ComponentScanningEvent;
 import com.cleanroommc.kirino.ecs.api.component.scan.event.StructScanningEvent;
 import com.cleanroommc.kirino.ecs.api.job.event.JobRegistrationEvent;
@@ -36,11 +38,14 @@ import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.math.MathHelper;
+import net.minecraftforge.client.ClientCommandHandler;
 import net.minecraftforge.client.ForgeHooksClient;
 import net.minecraftforge.client.MinecraftForgeClient;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.ModContainer;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.apache.commons.lang3.time.StopWatch;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL32;
@@ -490,6 +495,14 @@ public final class KirinoClientCore {
             Method onDebugHudRegister = KirinoClientCore.class.getDeclaredMethod("onDebugHudRegister", DebugHUDRegistrationEvent.class);
             registerMethod.invoke(KIRINO_EVENT_BUS, DebugHUDRegistrationEvent.class, KirinoClientCore.class, onDebugHudRegister, Loader.instance().getMinecraftModContainer());
             LOGGER.info("Registered the client-side default DebugHUDRegistrationEvent listener.");
+
+            if (CleanroomEnvironment.isDev()) {
+                EcsDebugCommand command = new EcsDebugCommand(KirinoCommonCore::ecsRuntime);
+                Method onRenderTick = EcsDebugCommand.class.getMethod("onRenderTick", TickEvent.RenderTickEvent.class);
+                registerMethod.invoke(MinecraftForge.EVENT_BUS, TickEvent.RenderTickEvent.class, command, onRenderTick,
+                    Loader.instance().getMinecraftModContainer());
+                ClientCommandHandler.instance.registerCommand(command);
+            }
         } catch (Throwable throwable) {
             throw new RuntimeException("Failed to register client-side default event listeners.", throwable);
         }
@@ -555,6 +568,9 @@ public final class KirinoClientCore {
     @SubscribeEvent
     public static void onComponentScan(ComponentScanningEvent event) {
         event.register("com.cleanroommc.kirino.engine.render.usage.ecs.component");
+        if (CleanroomEnvironment.isDev()) {
+            EcsDebugCommand.registerComponents(event);
+        }
     }
 
     @SubscribeEvent
@@ -564,6 +580,9 @@ public final class KirinoClientCore {
         event.register(MeshletDestroyJob.class);
         event.register(MeshletDebugJob.class);
         event.register(MeshletBufferWriteJob.class);
+        if (CleanroomEnvironment.isDev()) {
+            EcsDebugCommand.registerJobs(event);
+        }
     }
 
     @SubscribeEvent

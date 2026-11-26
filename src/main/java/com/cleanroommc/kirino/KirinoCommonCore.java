@@ -38,6 +38,10 @@ public final class KirinoCommonCore {
     private static CleanECSRuntime ECS_RUNTIME;
     public static KirinoEngine KIRINO_ENGINE;
 
+    static CleanECSRuntime ecsRuntime() {
+        return ECS_RUNTIME;
+    }
+
     //<editor-fold desc="static init">
     static {
         LOGGER = LogManager.getLogger("Kirino Core");

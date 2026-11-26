@@ -88,6 +88,10 @@ public class RuntimeApiTest {
 
     @SafeVarargs
     public static CleanECSRuntime runtime(Path home, Class<? extends ParallelJob>... extraJobs) throws Exception {
+        return runtimeWithRegistration(home, new Registration(extraJobs));
+    }
+
+    public static CleanECSRuntime runtimeWithRegistration(Path home, Object registration) throws Exception {
         CleanroomEnvironment.setSide(Side.CLIENT);
         var homeField = FMLInjectionData.class.getDeclaredField("minecraftHome");
         homeField.setAccessible(true);
@@ -102,7 +106,6 @@ public class RuntimeApiTest {
             Launch.minecraftHome = previousLaunch;
         }
         EventBus events = new EventBus();
-        Registration registration = new Registration(extraJobs);
         events.register(registration);
         try {
             return CleanECSRuntime.create(events, LogManager.getLogger(RuntimeApiTest.class));
