@@ -3,6 +3,7 @@ package com.cleanroommc.kirino.ecs;
 import com.cleanroommc.kirino.ecs.api.storage.PrimitiveArray;
 
 import com.cleanroommc.kirino.ecs.api.component.CleanComponent;
+import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 
@@ -10,10 +11,19 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 
+/**
+ * Stores an archetype in primitive heap columns with stable row indices while guarded.
+ */
 final class HeapPool extends ArchetypeDataPool {
     private final Map<Class<?>, ColumnBinding> byClass = new Reference2ObjectOpenHashMap<>();
     private final ColumnBinding[] bindings;
+    /**
+     * Column wrappers retained across resize. Each wrapper owns its current array.
+     */
     private final HeapPrimitiveArray[] columns;
+    /**
+     * Scratch indexed by component binding. Clear it before leaving insertion.
+     */
     private final CleanComponent[] insertionValues;
     private final Int2IntOpenHashMap entityRows = new Int2IntOpenHashMap();
     private final Int2IntOpenHashMap rowEntities = new Int2IntOpenHashMap();
@@ -32,9 +42,9 @@ final class HeapPool extends ArchetypeDataPool {
         for (int i = 0; i < components.size(); i++) {
             Class<? extends CleanComponent> type = components.get(i);
             ColumnBinding binding = new ColumnBinding(registry.getLayout(type), registry.getCodec(type), initSize, i);
-            if (byClass.putIfAbsent(type, binding) != null) {
-                throw new IllegalArgumentException("Duplicate component in archetype: " + type.getName());
-            }
+            Preconditions.checkArgument(byClass.putIfAbsent(type, binding) == null,
+                "Duplicate component type %s in archetype.", type);
+
             bindings[i] = binding;
             allColumns.addAll(Arrays.asList(binding.columns));
         }
@@ -59,7 +69,8 @@ final class HeapPool extends ArchetypeDataPool {
 
     @Override
     public void setComponent(int entityID, CleanComponent component) {
-        Objects.requireNonNull(component);
+        Preconditions.checkNotNull(component);
+
         ColumnBinding binding = binding(component.getClass());
         binding.codec.write(component, binding, row(entityID));
     }
@@ -67,24 +78,26 @@ final class HeapPool extends ArchetypeDataPool {
     @Override
     public synchronized void addEntity(int entityID, CleanComponent[] components) {
         requireStructuralAccess();
-        Objects.requireNonNull(components);
+        Preconditions.checkNotNull(components);
         if (entityRows.containsKey(entityID)) {
-            throw new IllegalArgumentException("Entity already exists: " + entityID);
+            throw new IllegalArgumentException("Entity " + entityID + " already exists.");
         }
 
         int componentSize = components.length;
         if (componentSize != bindings.length) {
-            throw new IllegalArgumentException("Component count doesn't match archetype");
+            throw new IllegalArgumentException("Component count doesn't match archetype.");
         }
+
         try {
             for (int i = 0; i < componentSize; i++) {
                 CleanComponent component = components[i];
-                Objects.requireNonNull(component);
+                Preconditions.checkNotNull(component);
                 ColumnBinding binding = binding(component.getClass());
                 int index = binding.componentIndex;
                 if (insertionValues[index] != null) {
-                    throw new IllegalArgumentException("Duplicate component: " + component.getClass().getName());
+                    throw new IllegalArgumentException("Duplicate component type " + component.getClass() + ".");
                 }
+
                 binding.codec.validate(component);
                 insertionValues[index] = component;
             }
@@ -103,13 +116,15 @@ final class HeapPool extends ArchetypeDataPool {
     @Override
     synchronized void addEntityFrom(int entityID, ArchetypeDataPool source, @Nullable CleanComponent addition) {
         requireStructuralAccess();
-        if (!(source instanceof HeapPool sourcePool) || source.componentRegistry != componentRegistry) {
-            throw new IllegalArgumentException("Transfer requires heap pools from the same component registry");
+        if (!(source instanceof HeapPool sourcePool) || sourcePool.componentRegistry != componentRegistry) {
+            throw new IllegalArgumentException("Transfer requires heap pools from the same component registry.");
         }
+
         sourcePool.requireStructuralAccess();
         if (entityRows.containsKey(entityID)) {
-            throw new IllegalArgumentException("Entity already exists: " + entityID);
+            throw new IllegalArgumentException("Entity " + entityID + " already exists.");
         }
+
         int sourceRow = sourcePool.row(entityID);
         TransferPlan plan = transfers.get(sourcePool);
         if (plan == null) {
@@ -118,12 +133,13 @@ final class HeapPool extends ArchetypeDataPool {
         }
         if (plan.addition == null) {
             if (addition != null) {
-                throw new IllegalArgumentException("REMOVE transfer doesn't accept an added component");
+                throw new IllegalArgumentException("REMOVE transfer doesn't accept an added component.");
             }
         } else {
             if (addition == null || addition.getClass() != plan.addition.layout.javaClass()) {
-                throw new IllegalArgumentException("Added component doesn't match target archetype");
+                throw new IllegalArgumentException("Added component doesn't match target archetype.");
             }
+
             plan.addition.codec.validate(addition);
         }
         int targetRow = nextInsertionRow();
@@ -150,6 +166,9 @@ final class HeapPool extends ArchetypeDataPool {
         rows.occupy(row);
     }
 
+    /**
+     * Pairs shared columns by layout identity and records the one added component, if any.
+     */
     private static final class TransferPlan {
         final HeapPrimitiveArray[] sources;
         final HeapPrimitiveArray[] targets;
@@ -162,20 +181,23 @@ final class HeapPool extends ArchetypeDataPool {
                 ColumnBinding origin = source.byClass.get(destination.layout.javaClass());
                 if (origin == null) {
                     if (missing != null) {
-                        throw new IllegalArgumentException("Transfer adds more than one component");
+                        throw new IllegalArgumentException("Transfer adds more than one component.");
                     }
+
                     missing = destination;
                 } else {
                     if (origin.layout != destination.layout) {
-                        throw new IllegalArgumentException("Shared component layouts don't match");
+                        throw new IllegalArgumentException("Shared component layouts don't match.");
                     }
+
                     count = Math.addExact(count, origin.columns.length);
                 }
             }
             if (missing == null ? source.bindings.length != target.bindings.length + 1
                 : source.bindings.length != target.bindings.length - 1) {
-                throw new IllegalArgumentException("Transfer must add or remove exactly one component");
+                throw new IllegalArgumentException("Transfer must add or remove exactly one component.");
             }
+
             addition = missing;
             sources = new HeapPrimitiveArray[count];
             targets = new HeapPrimitiveArray[count];
@@ -185,8 +207,9 @@ final class HeapPool extends ArchetypeDataPool {
                 if (origin != null) {
                     for (int column = 0; column < origin.columns.length; column++) {
                         if (origin.columns[column].type() != destination.columns[column].type()) {
-                            throw new IllegalArgumentException("Shared column types don't match");
+                            throw new IllegalArgumentException("Shared column types don't match.");
                         }
+
                         sources[offset] = origin.columns[column];
                         targets[offset] = destination.columns[column];
                         offset++;
@@ -223,6 +246,15 @@ final class HeapPool extends ArchetypeDataPool {
         }
     }
 
+    /**
+     * Prepares all replacement arrays before publishing any of them.
+     *
+     * <p>The caller must hold the pool monitor and have structural access. Allocation
+     * failure during preparation leaves the existing arrays and capacity intact. Consumers
+     * that hold a column wrapper see the new backing array after publication.</p>
+     *
+     * @param size Target capacity in rows, at least the live row limit.
+     */
     private void resize(int size) {
         int[] nextFree = Arrays.copyOf(rows.nextFree, size);
         int[] previousFree = Arrays.copyOf(rows.previousFree, size);
@@ -246,30 +278,33 @@ final class HeapPool extends ArchetypeDataPool {
     @Override
     public synchronized void endExecution() {
         if (executions == 0) {
-            throw new IllegalStateException("No active pool execution");
+            throw new IllegalStateException("No active pool execution.");
         }
+
         executions--;
     }
 
     private void requireStructuralAccess() {
         if (executions != 0) {
-            throw new IllegalStateException("Structural changes aren't allowed while jobs use this pool");
+            throw new IllegalStateException("Structural changes aren't allowed while jobs use this pool.");
         }
     }
 
     private int row(int entityID) {
         int row = entityRows.get(entityID);
         if (row < 0) {
-            throw new IllegalArgumentException("Unknown entity: " + entityID);
+            throw new IllegalArgumentException("Unknown entity: " + entityID + ".");
         }
+
         return row;
     }
 
     private ColumnBinding binding(Class<?> component) {
-        ColumnBinding binding = byClass.get(Objects.requireNonNull(component));
+        ColumnBinding binding = byClass.get(Preconditions.checkNotNull(component));
         if (binding == null) {
-            throw new IllegalArgumentException("Component isn't stored in this archetype: " + component.getName());
+            throw new IllegalArgumentException("Component type " + component + " isn't stored in this archetype.");
         }
+
         return binding;
     }
 
@@ -292,8 +327,9 @@ final class HeapPool extends ArchetypeDataPool {
     @Override
     public int getEntityID(int index) {
         if (!rowEntities.containsKey(index)) {
-            throw new IllegalStateException("No entity at index=" + index);
+            throw new IllegalStateException("No entity at index=" + index + ".");
         }
+
         return rowEntities.get(index);
     }
 

@@ -57,9 +57,12 @@ public final class ReflectionUtils {
     private ReflectionUtils() {
     }
 
-    private static final boolean isDeobf = FMLLaunchHandler.isDeobfuscatedEnvironment();
-    // Consider using ImagineBreaker if this lookup isn't privileged enough
+    // consider using ImagineBreaker if this lookup isn't privileged enough
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
+
+    private static final class Obfuscation {
+        private static final boolean DEOBFUSCATED = FMLLaunchHandler.isDeobfuscatedEnvironment();
+    }
 
     public static MethodHandles.Lookup getLookup() {
         return LOOKUP;
@@ -183,7 +186,7 @@ public final class ReflectionUtils {
         }
         boolean isStatic = isStaticResult.get();
 
-        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         VarHandle handle = null;
         try {
             String name = hasObfName ? obfFieldName : fieldName;
@@ -228,7 +231,7 @@ public final class ReflectionUtils {
     //<editor-fold desc="find field">
     @Nullable
     public static Field findDeclaredField(Class<?> clazz, String fieldName, @Nullable String obfFieldName) {
-        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         Field field = null;
         try {
             field = clazz.getDeclaredField(hasObfName ? obfFieldName : fieldName);
@@ -251,7 +254,7 @@ public final class ReflectionUtils {
 
     @Nullable
     public static Field findField(Class<?> clazz, String fieldName, @Nullable String obfFieldName) {
-        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         Field field = null;
         try {
             field = clazz.getField(hasObfName ? obfFieldName : fieldName);
@@ -296,7 +299,7 @@ public final class ReflectionUtils {
         }
         boolean isStatic = isStaticResult.get();
 
-        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         MethodHandle handle = null;
         try {
             String name = hasObfName ? obfFieldName : fieldName;
@@ -361,7 +364,7 @@ public final class ReflectionUtils {
         }
 
         boolean isStatic = isStaticResult.get();
-        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfFieldName != null && !obfFieldName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         MethodHandle handle = null;
         try {
             String name = hasObfName ? obfFieldName : fieldName;
@@ -406,7 +409,7 @@ public final class ReflectionUtils {
     //<editor-fold desc="find method">
     @Nullable
     public static Method findDeclaredMethod(Class<?> clazz, String methodName, @Nullable String obfMethodName, Class<?>... params) {
-        boolean hasObfName = obfMethodName != null && !obfMethodName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfMethodName != null && !obfMethodName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         Method method = null;
         try {
             method = clazz.getDeclaredMethod(hasObfName ? obfMethodName : methodName, params);
@@ -429,7 +432,7 @@ public final class ReflectionUtils {
 
     @Nullable
     public static Method findMethod(Class<?> clazz, String methodName, @Nullable String obfMethodName, Class<?>... params) {
-        boolean hasObfName = obfMethodName != null && !obfMethodName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfMethodName != null && !obfMethodName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         Method method = null;
         try {
             method = clazz.getMethod(hasObfName ? obfMethodName : methodName, params);
@@ -479,7 +482,7 @@ public final class ReflectionUtils {
         boolean isStatic = isStaticResult.get();
 
         MethodType methodType = MethodType.methodType(returnClass, params);
-        boolean hasObfName = obfMethodName != null && !obfMethodName.isEmpty() && !isDeobf;
+        boolean hasObfName = obfMethodName != null && !obfMethodName.isEmpty() && !Obfuscation.DEOBFUSCATED;
         MethodHandle handle = null;
         try {
             String name = hasObfName ? obfMethodName : methodName;

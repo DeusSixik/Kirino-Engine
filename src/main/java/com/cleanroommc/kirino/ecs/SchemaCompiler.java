@@ -1,6 +1,7 @@
 package com.cleanroommc.kirino.ecs;
 
 import com.cleanroommc.kirino.schemata.collections.ObjectArrayView;
+import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -8,18 +9,32 @@ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import java.util.*;
 import java.util.function.Function;
 
+/**
+ * Compiles registered members to ordered columns and a flattened-path index.
+ */
 final class SchemaCompiler {
     private SchemaCompiler() {
     }
 
+    /**
+     * Assigns column ordinals in member order and expands nested layouts into that order.
+     *
+     * @param name         Diagnostic name of the registered schema.
+     * @param javaClass    Java class represented by the layout.
+     * @param definitions  Field definitions in the same order as the member names.
+     * @param memberLayout Ordered Java field names.
+     * @param structs      Resolver for previously prepared, acyclic struct definitions.
+     * @return The prepared layout with position and path metadata.
+     * @throws IllegalArgumentException If member metadata is inconsistent or a nested struct cannot be resolved.
+     */
     public static SchemaLayout compile(String name, Class<?> javaClass, List<FieldDef> definitions,
                                        MemberLayout memberLayout, Function<String, SchemaLayout> structs) {
-        Objects.requireNonNull(name);
-        Objects.requireNonNull(javaClass);
-        Objects.requireNonNull(structs);
-        if (definitions.size() != memberLayout.fieldNames.size()) {
-            throw new IllegalArgumentException("Field names and definitions have different lengths in " + name);
-        }
+        Preconditions.checkNotNull(name);
+        Preconditions.checkNotNull(javaClass);
+        Preconditions.checkNotNull(structs);
+        Preconditions.checkArgument(definitions.size() == memberLayout.fieldNames.size(),
+            "Field names and definitions have different lengths in %s.", name);
+
         List<SchemaLayout.Member> members = new ObjectArrayList<>();
         List<SchemaLayout.Column> columns = new ObjectArrayList<>();
         Map<String, MutableNode> paths = new Object2ObjectOpenHashMap<>();
@@ -27,9 +42,9 @@ final class SchemaCompiler {
         String[] fieldNames = memberLayout.fieldNames.elements();
         for (int i = 0; i < definitions.size(); i++) {
             String fieldName = fieldNames[i];
-            if (paths.putIfAbsent(fieldName, new MutableNode()) != null) {
-                throw new IllegalArgumentException("Duplicate field " + fieldName + " in " + name);
-            }
+            Preconditions.checkArgument(paths.putIfAbsent(fieldName, new MutableNode()) == null,
+                "Duplicate field %s in %s.", fieldName, name);
+
             FieldDef definition = definitions.get(i);
             SchemaLayout nested = definition.fieldKind == FieldKind.STRUCT ? structs.apply(definition.structTypeName) : null;
             int first = columns.size();
@@ -57,7 +72,7 @@ final class SchemaCompiler {
                     }
                 }
             } else {
-                throw new IllegalArgumentException("Unresolved struct " + definition.structTypeName + " in " + name);
+                throw new IllegalArgumentException("Unresolved struct " + definition.structTypeName + " in " + name + ".");
             }
             members.add(new SchemaLayout.Member(fieldName, definition, first, columns.size() - first, nested));
         }

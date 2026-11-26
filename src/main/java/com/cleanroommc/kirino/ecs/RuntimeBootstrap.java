@@ -17,8 +17,16 @@ import java.lang.invoke.MethodHandle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
+/**
+ * Builds the registries before publishing runtime services.
+ *
+ * <p>Bootstrap registers built-in scalar shapes, discovers structs, freezes struct and
+ * field definitions, prepares component schemas, then resolves job bindings against
+ * the locked component registry. Registration events run on the bootstrap caller's thread.</p>
+ */
 final class RuntimeBootstrap {
 
     @SuppressWarnings("FieldCanBeLocal")
@@ -168,6 +176,13 @@ final class RuntimeBootstrap {
         }
     }
 
+    /**
+     * Creates the public runtime after all registration stages succeed.
+     *
+     * @param eventBus Event bus for the synchronous registration requests.
+     * @param logger   Bootstrap diagnostics.
+     * @return The published runtime with prepared definitions.
+     */
     static CleanECSRuntime create(EventBus eventBus, Logger logger) {
         RuntimeBootstrap bootstrap = new RuntimeBootstrap(eventBus, logger);
         return MethodHolder.newRuntime(bootstrap.entityManager, bootstrap.jobScheduler);
@@ -189,7 +204,7 @@ final class RuntimeBootstrap {
         return ((EntityManager) manager).lifecycle.state();
     }
 
-    static java.util.concurrent.CompletableFuture<Void> quiesce(com.cleanroommc.kirino.ecs.api.EntityManager manager) {
+    static CompletableFuture<Void> quiesce(com.cleanroommc.kirino.ecs.api.EntityManager manager) {
         return ((EntityManager) manager).lifecycle.quiesce();
     }
 

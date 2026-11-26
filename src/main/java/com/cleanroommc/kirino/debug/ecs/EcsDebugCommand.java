@@ -76,11 +76,11 @@ public final class EcsDebugCommand extends CommandBase {
         }
         Options options = parse(args);
         if (active != null) {
-            throw new CommandException("An ECS test is already running. Use /kirinoecs status");
+            throw new CommandException("An ECS test is already running. Use /kirinoecs status.");
         }
         Minecraft client = Minecraft.getMinecraft();
         if (client.world == null || client.player != sender) {
-            throw new CommandException("Join a world before running the ECS test");
+            throw new CommandException("Join a world before running the ECS test.");
         }
         active = new Run(sender, client.world, options);
         chat(sender, "Collecting " + BASELINE_FRAMES + " baseline frames, then running " + options.scenarios

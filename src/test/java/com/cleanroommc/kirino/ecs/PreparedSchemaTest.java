@@ -248,6 +248,32 @@ class PreparedSchemaTest {
     }
 
     @Test
+    void accessPool_privateInheritedAndShadowedFields_resolveToTheirDeclaringClasses() {
+        AccessHandlePool pool = new AccessHandlePool();
+        pool.register(PrivateFields.class, new MemberLayout("value", "inherited"));
+
+        PrivateFields instance = (PrivateFields) pool.newClass(PrivateFields.class);
+        pool.setFieldValue(PrivateFields.class, instance, "inherited", 7);
+        pool.setFieldValue(PrivateFields.class, instance, "value", 11L);
+
+        assertEquals(7, pool.getFieldValue(PrivateFields.class, instance, "inherited"));
+        assertEquals(11L, pool.getFieldValue(PrivateFields.class, instance, "value"));
+        assertEquals(3, ((PrivateFieldsBase) instance).value);
+    }
+
+    private static class PrivateFieldsBase {
+        private int inherited;
+        private int value = 3;
+    }
+
+    private static final class PrivateFields extends PrivateFieldsBase {
+        private long value;
+
+        private PrivateFields() {
+        }
+    }
+
+    @Test
     void componentRegistration_duplicateClass_keepsBothIndexesConsistent() {
         ComponentRegistry components = new ComponentRegistry(new FieldRegistry(new StructRegistry()));
         components.registerComponent("first", EmptyComponent.class, new MemberLayout());

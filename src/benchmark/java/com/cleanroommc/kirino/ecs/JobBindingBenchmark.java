@@ -208,4 +208,3 @@ public class JobBindingBenchmark {
         public int estimateWorkload(int row) { return workload; }
     }
 }
-

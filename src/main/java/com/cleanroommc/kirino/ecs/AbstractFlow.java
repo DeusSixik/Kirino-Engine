@@ -17,6 +17,14 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
+/**
+ * Executes a topology snapshot bound to the runtime epoch at construction.
+ *
+ * <p>A run visits barriers in topological order and waits for incoming work. It holds
+ * acquired systems until draining and terminal callbacks finish. Catching {@link Throwable}
+ * at the run boundary covers user code and executor failures so acquired systems are
+ * released and faults reach the caller or observer.</p>
+ */
 abstract class AbstractFlow implements SystemExeFlowGraph {
     static final class BarrierNode {
         final String id;
@@ -119,6 +127,12 @@ abstract class AbstractFlow implements SystemExeFlowGraph {
         return new ObservedCompletion(run.lease == null ? run.completion : run.lease.completion);
     }
 
+    /**
+     * Claims the flow for a new run.
+     *
+     * @return The accepted run in the flow's original runtime epoch.
+     * @throws IllegalStateException If another run is active or the epoch is unavailable.
+     */
     private Run start() {
         Preconditions.checkState(executing.compareAndSet(false, true),
             "Must not execute while the previous flow execution is in progress.");
@@ -208,7 +222,8 @@ abstract class AbstractFlow implements SystemExeFlowGraph {
         }
 
         void finishAsync(Throwable failure) {
-            drain().whenComplete((unused, drainFailure) -> complete(ExecutionFailures.unwrap(failure)));
+            drain().whenComplete((unused, drainFailure) ->
+                complete(ExecutionFailures.unwrap(failure)));
         }
 
         void complete(Throwable failure) {
@@ -220,6 +235,11 @@ abstract class AbstractFlow implements SystemExeFlowGraph {
             }
         }
 
+        /**
+         * Reports the terminal result, releases systems, and publishes completion.
+         *
+         * @param failure Primary graph failure, or null if the graph reached its end.
+         */
         void completeOwned(Throwable failure) {
             for (SystemExecution execution : acquired) {
                 try {

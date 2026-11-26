@@ -1,16 +1,24 @@
 package com.cleanroommc.kirino.ecs;
 
+import com.cleanroommc.kirino.utils.ReflectionUtils;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 
 import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.*;
+import java.util.Map;
 
+/**
+ * Prepares constructor and field handles once per Java layout.
+ *
+ * <p>Bindings are specific to runtime registration. Fields are resolved from the
+ * concrete class toward its superclasses, and private access uses the field's declaring
+ * class. Typed primitive handles let storage code move values without boxing.</p>
+ */
 class AccessHandlePool {
     private final Map<Class<?>, Access> membersMap = new Reference2ObjectOpenHashMap<>();
 
@@ -19,15 +27,24 @@ class AccessHandlePool {
         membersMap.put(clazz, access);
     }
 
+    /**
+     * Resolves the no-argument constructor and mutable instance fields for one layout.
+     *
+     * @param clazz        Concrete schema class.
+     * @param memberLayout Field names in layout order.
+     * @return Prepared access handles for this class and field order.
+     * @throws IllegalArgumentException If the constructor or a requested mutable field cannot be bound.
+     */
     public static Access prepare(Class<?> clazz, MemberLayout memberLayout) {
-        Objects.requireNonNull(clazz);
-        Objects.requireNonNull(memberLayout);
+        Preconditions.checkNotNull(clazz);
+        Preconditions.checkNotNull(memberLayout);
+        Preconditions.checkArgument(!Modifier.isAbstract(clazz.getModifiers()) && !clazz.isInterface(),
+            "Class %s must be concrete.", clazz);
+
         try {
-            if (Modifier.isAbstract(clazz.getModifiers()) || clazz.isInterface()) {
-                throw new IllegalArgumentException("Class must be concrete: " + clazz.getName());
-            }
-            MethodHandle constructor = MethodHandles.privateLookupIn(clazz, MethodHandles.lookup())
-                .findConstructor(clazz, MethodType.methodType(void.class));
+            MethodHandle constructor = ReflectionUtils.getConstructor(clazz);
+            Preconditions.checkArgument(constructor != null, "Class %s requires an accessible no-argument constructor.", clazz);
+
             String[] fieldNames = memberLayout.fieldNames.elements();
             MethodHandle[] getters = new MethodHandle[fieldNames.length];
             MethodHandle[] primitiveGetters = new MethodHandle[fieldNames.length];
@@ -38,11 +55,11 @@ class AccessHandlePool {
             for (int i = 0; i < fieldNames.length; i++) {
                 String name = fieldNames[i];
                 Field javaField = findField(clazz, name);
-                VarHandle field = MethodHandles.privateLookupIn(javaField.getDeclaringClass(), MethodHandles.lookup())
-                    .unreflectVarHandle(javaField);
-                if (field.coordinateTypes().size() != 1 || !field.isAccessModeSupported(VarHandle.AccessMode.SET)) {
-                    throw new IllegalArgumentException("Field must be a mutable instance field: " + clazz.getName() + "." + name);
-                }
+                VarHandle field = ReflectionUtils.getField(javaField.getDeclaringClass(), name, javaField.getType());
+                Preconditions.checkArgument(field != null, "Cannot access field %s.%s.", clazz.getName(), name);
+                Preconditions.checkArgument(field.coordinateTypes().size() == 1 && field.isAccessModeSupported(VarHandle.AccessMode.SET),
+                    "Field %s.%s must be a mutable instance field.", clazz.getName(), name);
+
                 getters[i] = field.toMethodHandle(VarHandle.AccessMode.GET).asType(MethodType.methodType(Object.class, Object.class));
                 setters[i] = field.toMethodHandle(VarHandle.AccessMode.SET).asType(MethodType.methodType(void.class, Object.class, Object.class));
                 Class<?> primitive = MethodType.methodType(field.varType()).unwrap().returnType();
@@ -53,43 +70,43 @@ class AccessHandlePool {
             }
             return new Access(clazz, constructor.asType(MethodType.methodType(Object.class)), getters,
                 setters, types, indexes.buildOrThrow(), primitiveGetters, primitiveSetters);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalArgumentException("Cannot prepare fields of " + clazz.getName(), e);
+        } catch (NoSuchFieldException | IllegalStateException e) {
+            throw new IllegalArgumentException("Cannot prepare fields of " + clazz.getName() + ".", e);
         }
     }
 
     private static Field findField(Class<?> clazz, String name) throws NoSuchFieldException {
         for (Class<?> current = clazz; current != null; current = current.getSuperclass()) {
-            try {
-                return current.getDeclaredField(name);
-            } catch (NoSuchFieldException ignored) {
+            Field field = ReflectionUtils.findDeclaredField(current, name);
+            if (field != null) {
+                return field;
             }
         }
-        throw new NoSuchFieldException(clazz.getName() + "." + name);
+
+        throw new NoSuchFieldException("Cannot find field " + clazz.getName() + "." + name + ".");
     }
 
     public boolean classRegistered(Class<?> clazz) {
-        return membersMap.containsKey(Objects.requireNonNull(clazz));
+        return membersMap.containsKey(Preconditions.checkNotNull(clazz));
     }
 
     public Object newClass(Class<?> clazz) {
-        Access access = membersMap.get(Objects.requireNonNull(clazz));
+        Access access = membersMap.get(Preconditions.checkNotNull(clazz));
         return access == null ? null : access.newInstance();
     }
 
     public void setFieldValue(Class<?> clazz, Object target, String fieldName, Object value) {
-        requireAccess(clazz).set(Objects.requireNonNull(target), Objects.requireNonNull(fieldName), value);
+        requireAccess(clazz).set(Preconditions.checkNotNull(target), Preconditions.checkNotNull(fieldName), value);
     }
 
     public Object getFieldValue(Class<?> clazz, Object target, String fieldName) {
-        return requireAccess(clazz).get(Objects.requireNonNull(target), Objects.requireNonNull(fieldName));
+        return requireAccess(clazz).get(Preconditions.checkNotNull(target), Preconditions.checkNotNull(fieldName));
     }
 
     private Access requireAccess(Class<?> clazz) {
-        Access access = membersMap.get(Objects.requireNonNull(clazz));
-        if (access == null) {
-            throw new IllegalArgumentException("Class isn't registered: " + clazz.getName());
-        }
+        Access access = membersMap.get(Preconditions.checkNotNull(clazz));
+        Preconditions.checkArgument(access != null, "Class %s isn't registered.", clazz);
+
         return access;
     }
 
@@ -266,9 +283,8 @@ class AccessHandlePool {
 
         private int index(String name) {
             Integer index = indexes.get(name);
-            if (index == null) {
-                throw new IllegalArgumentException("Unknown field " + javaClass.getName() + "." + name);
-            }
+            Preconditions.checkArgument(index != null, "Unknown field %s in %s.", name, javaClass);
+
             return index;
         }
 
@@ -276,7 +292,8 @@ class AccessHandlePool {
             if (cause instanceof Error error) {
                 throw error;
             }
-            return new IllegalStateException("Cannot " + operation + " in " + javaClass.getName(), cause);
+
+            return new IllegalStateException("Cannot " + operation + " in " + javaClass.getName() + ".", cause);
         }
     }
 }

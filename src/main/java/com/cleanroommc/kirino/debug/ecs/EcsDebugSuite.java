@@ -14,6 +14,7 @@ import com.cleanroommc.kirino.ecs.api.job.ParallelJob;
 import com.cleanroommc.kirino.ecs.api.storage.PrimitiveArray;
 import com.sun.management.ThreadMXBean;
 import org.joml.Matrix4f;
+import com.google.common.base.Preconditions;
 import org.joml.Vector3f;
 
 import java.lang.management.ManagementFactory;
@@ -76,7 +77,7 @@ public final class EcsDebugSuite {
                         case LIFECYCLE -> heldJobChecked = lifecycle(runtime, flushes);
                     }
                 } catch (Exception failure) {
-                    throw new IllegalStateException(scenario + " failed", failure);
+                    throw new IllegalStateException(scenario + " failed.", failure);
                 }
                 long elapsed = System.nanoTime() - start;
                 long after = allocatedBytes(threadIds);
@@ -242,9 +243,9 @@ public final class EcsDebugSuite {
         }
         flushes.flush(entities);
         var pending = entities.createEntity(context -> {
-            throw new IllegalStateException("An uncommitted entity reached its destroy callback");
+            throw new IllegalStateException("An uncommitted entity reached its destroy callback.");
         }, context -> {
-            throw new IllegalStateException("Reset committed a pending entity");
+            throw new IllegalStateException("Reset committed a pending entity.");
         }, row(rows, rows));
 
         Verification verification = new Verification(expected(rows), true, true);
@@ -364,7 +365,7 @@ public final class EcsDebugSuite {
             check(latch.await(30, TimeUnit.SECONDS), "Timed out coordinating command producers");
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while coordinating command producers", failure);
+            throw new IllegalStateException("Interrupted while coordinating command producers.", failure);
         }
     }
 
@@ -374,19 +375,15 @@ public final class EcsDebugSuite {
         } catch (IllegalStateException expected) {
             return;
         }
-        throw new IllegalStateException("Expected rejection of " + description);
+        throw new IllegalStateException("Expected rejection of " + description + ".");
     }
 
     private static void check(boolean condition, String message) {
-        if (!condition) {
-            throw new IllegalStateException(message);
-        }
+        Preconditions.checkState(condition, "%s.", message);
     }
 
     private static void check(boolean condition, String message, int row) {
-        if (!condition) {
-            throw new IllegalStateException(message + row);
-        }
+        Preconditions.checkState(condition, "%s%s.", message, row);
     }
 
     private static long allocatedBytes(long[] threadIds) {
@@ -435,9 +432,7 @@ public final class EcsDebugSuite {
 
         void checkVisits() {
             for (int i = 0; i < expected.length; i++) {
-                if (visits.get(i) != (expected[i] == ABSENT ? 0 : 1)) {
-                    throw new IllegalStateException("Job did not visit row " + i);
-                }
+                Preconditions.checkState(visits.get(i) == (expected[i] == ABSENT ? 0 : 1), "Job did not visit row %s.", i);
             }
         }
     }
@@ -475,20 +470,21 @@ public final class EcsDebugSuite {
         @Override
         public void execute(EntityCommands commands, int index, int entityID, int threadOrdinal) {
             int id = ids.getInt(index);
-            if (id < 0 || id >= verification.expected.length || verification.expected[id] == ABSENT) {
-                throw new IllegalStateException("Job visited an unexpected row " + id);
-            }
+            Preconditions.checkState(id >= 0 && id < verification.expected.length && verification.expected[id] != ABSENT,
+                "Job visited an unexpected row %s.", id);
+
             int value = values.getInt(index);
-            if (value != verification.expected[id] || positions.getFloat(index) != id || !verification.visits.compareAndSet(id, 0, 1)) {
-                throw new IllegalStateException("Job visited row " + id + " twice or read incorrect component data");
-            }
+            Preconditions.checkState(value == verification.expected[id] && positions.getFloat(index) == id
+                    && verification.visits.compareAndSet(id, 0, 1),
+                "Job visited row %s twice or read incorrect component data.", id);
+
             if (verification.update) {
                 values.setInt(index, value + 1);
             }
             if (verification.queueFromJob && id == 0) {
                 verification.commands = commands;
                 verification.queued = commands.createEntity(null, context -> {
-                    throw new IllegalStateException("Reset committed a command from a job");
+                    throw new IllegalStateException("Reset committed a command from a job.");
                 }, row(verification.expected.length, 0));
             }
         }

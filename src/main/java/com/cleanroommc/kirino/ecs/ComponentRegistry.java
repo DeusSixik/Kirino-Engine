@@ -11,6 +11,12 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 
+/**
+ * Stores component definitions indexed by registered name and exact Java class.
+ *
+ * <p>Bootstrap owns registration. After locking, sessions can share schemas and codecs
+ * for concurrent reads. Treat the published layouts and their arrays as read-only.</p>
+ */
 class ComponentRegistry {
     private final FieldRegistry fieldRegistry;
 
@@ -24,13 +30,15 @@ class ComponentRegistry {
     private boolean lockRegistry = false;
 
     /**
-     * This method is the entry point to register components.
-     * <code>memberLayout.fieldNames</code> must match <code>fieldTypeNames</code> one by one.
+     * Registers a component and compiles its flattened layout before publishing either index.
      *
-     * @param name           The registry name of the component
-     * @param clazz          The corresponding class of the component
-     * @param memberLayout   The metadata of the component class
-     * @param fieldTypeNames The field registry names of the component
+     * @param name           Unique component registry name.
+     * @param clazz          Exact concrete component class.
+     * @param memberLayout   Java fields in schema order.
+     * @param fieldTypeNames Registered field type name for each member in the same order.
+     * @throws IllegalStateException    If registration is closed or the name is taken.
+     * @throws IllegalArgumentException If the class is already registered or the schema is invalid.
+     * @throws NullPointerException     If a required argument or field type name is null.
      */
     public synchronized void registerComponent(
         @NonNull String name,
@@ -67,7 +75,10 @@ class ComponentRegistry {
     }
 
     /**
-     * Register calls are no longer allowed after the lock call.
+     * Prepares codecs for every registered component and publishes them as one locked set.
+     *
+     * @throws IllegalStateException    If the registry is already locked.
+     * @throws IllegalArgumentException If a layout cannot be bound to its Java class.
      */
     public synchronized void lock() {
         Preconditions.checkState(!lockRegistry, "The registry is already locked!");
@@ -158,20 +169,30 @@ class ComponentRegistry {
     }
 
     public SchemaLayout getLayout(String name) {
-        Data data = componentData.get(Objects.requireNonNull(name));
-        Preconditions.checkArgument(data != null, "Component type %s doesn't exist.", name);
+        Data data = componentData.get(Preconditions.checkNotNull(name));
+        if (data == null) {
+            throw new IllegalArgumentException("Component type " + name + " doesn't exist.");
+        }
+
         return data.layout;
     }
 
     public SchemaLayout getLayout(Class<? extends CleanComponent> clazz) {
-        Data data = componentDataByClass.get(Objects.requireNonNull(clazz));
-        Preconditions.checkArgument(data != null, "Component class %s isn't registered.", clazz);
+        Data data = componentDataByClass.get(Preconditions.checkNotNull(clazz));
+
+        if (data == null) {
+            throw new IllegalArgumentException("Component class " + clazz + " isn't registered.");
+        }
+
         return data.layout;
     }
 
     public ObjectCodec getCodec(Class<? extends CleanComponent> component) {
-        Data data = componentDataByClass.get(Objects.requireNonNull(component));
-        Preconditions.checkArgument(data != null, "Component class %s isn't registered.", component);
+        Data data = componentDataByClass.get(Preconditions.checkNotNull(component));
+        if (data == null) {
+            throw new IllegalArgumentException("Component class " + component + " isn't registered.");
+        }
+
         return codec(data);
     }
 
@@ -196,11 +217,13 @@ class ComponentRegistry {
     @Nullable
     @SuppressWarnings("DataFlowIssue")
     public CleanComponent newComponent(@NonNull String name, @NonNull Object @NonNull ... args) {
-        Objects.requireNonNull(name);
-        Objects.requireNonNull(args);
+        Preconditions.checkNotNull(name);
+        Preconditions.checkNotNull(args);
+
         for (Object arg : args) {
-            Objects.requireNonNull(arg);
+            Preconditions.checkNotNull(arg);
         }
+
         Data data = componentData.get(name);
         return data == null ? null : (CleanComponent) codec(data).create(args);
     }
@@ -209,10 +232,13 @@ class ComponentRegistry {
 
     @SuppressWarnings("DataFlowIssue")
     public @NonNull Object @NonNull [] flattenComponent(@NonNull CleanComponent component) {
-        Data data = componentDataByClass.get(Objects.requireNonNull(component).getClass());
-        if (data == null) {
-            throw new IllegalArgumentException("Component class isn't registered: " + component.getClass().getName());
+        Class<?> componentClass = Preconditions.checkNotNull(component).getClass();
+        Data data = componentDataByClass.get(componentClass);
+
+        if(data == null) {
+            throw new IllegalArgumentException("Component type " + componentClass + " isn't registered.");
         }
+
         return codec(data).flatten(component);
     }
 

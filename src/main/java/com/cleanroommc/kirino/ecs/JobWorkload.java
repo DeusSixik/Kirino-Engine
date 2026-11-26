@@ -4,10 +4,23 @@ import com.cleanroommc.kirino.ecs.api.job.ParallelJob;
 
 import java.util.Arrays;
 
+/**
+ * Prepares positive load weights for occupied rows in one pool.
+ *
+ * <p>A uniform pool uses a single weight. A mixed pool uses densely packed estimates
+ * in occupied-row order. Holes consume no entry. Preparation scratch is held by the
+ * submitting thread, and workers capture their row bounds before submission.</p>
+ */
 final class JobWorkload {
     private static final int[] NO_ESTIMATES = new int[0];
 
+    /**
+     * Common positive weight, or zero if estimates are mixed or no rows are occupied.
+     */
     int uniform;
+    /**
+     * Reusable dense estimates. Read only the live prefix when weights are mixed.
+     */
     int[] estimates = NO_ESTIMATES;
 
     void reset(int maximumRetainedEstimates) {
@@ -17,6 +30,17 @@ final class JobWorkload {
         }
     }
 
+    /**
+     * Estimates each occupied row once before choosing partition boundaries.
+     *
+     * <p>The returned load is the sum of per-row weights. A long holds the sum of at most
+     * an int-sized number of int weights without overflow.</p>
+     *
+     * @param job  Bound estimator for this pool.
+     * @param rows Occupancy metadata held stable by the execution scope.
+     * @return Total relative workload, or zero if there are no occupied rows.
+     * @throws IllegalStateException If an estimator reports a nonpositive weight.
+     */
     long prepare(ParallelJob job, PoolRows rows) {
         int liveCount = 0;
         long total = 0;

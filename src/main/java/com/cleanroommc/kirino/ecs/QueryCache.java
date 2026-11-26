@@ -6,6 +6,13 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.Arrays;
 
+/**
+ * Caches committed pool selections by required and excluded component identities.
+ *
+ * <p>The manager uses this cache under its monitor. Entries snapshot the condition sets
+ * and own their pool reference arrays. The manager invalidates selections on pool
+ * creation and runtime cleanup. The execution scope protects selected pools separately.</p>
+ */
 final class QueryCache {
     static final int MIN_POOLS = 64;
     static final int CAPACITY = 64;

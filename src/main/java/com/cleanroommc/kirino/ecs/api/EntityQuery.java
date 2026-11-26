@@ -2,65 +2,29 @@ package com.cleanroommc.kirino.ecs.api;
 
 import com.cleanroommc.anone.value.CanIgnoreReturnValue;
 import com.cleanroommc.kirino.ecs.api.component.CleanComponent;
+import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.objects.ReferenceArraySet;
 import it.unimi.dsi.fastutil.objects.ReferenceSet;
 import org.jspecify.annotations.NonNull;
 
 /**
- * Query creation + checking 64 archetypes, ns per full pass &mdash; first run:
+ * Builds a component-composition filter for the job scheduler.
  *
- * <table class="striped">
- *   <caption>Benchmark: Query creation + checking 64 archetypes, ns per full pass &mdash; first run</caption>
- *   <thead>
- *     <tr>
- *       <th scope="col">Collection</th>
- *       <th scope="col" style="text-align:right">1 condition</th>
- *       <th scope="col" style="text-align:right">4+2 conditions</th>
- *       <th scope="col" style="text-align:right">4+2 repeated &times;4</th>
- *       <th scope="col" style="text-align:right">16+4 conditions</th>
- *     </tr>
- *   </thead>
- *   <tbody>
- *     <tr>
- *       <td>ArrayList</td>
- *       <td style="text-align:right">156</td>
- *       <td style="text-align:right">601</td>
- *       <td style="text-align:right">1664</td>
- *       <td style="text-align:right">1973</td>
- *     </tr>
- *     <tr>
- *       <td>ObjectArrayList</td>
- *       <td style="text-align:right">150</td>
- *       <td style="text-align:right"><b>391</b></td>
- *       <td style="text-align:right">1027</td>
- *       <td style="text-align:right"><b>1685</b></td>
- *     </tr>
- *     <tr>
- *       <td>ReferenceArrayList</td>
- *       <td style="text-align:right">154</td>
- *       <td style="text-align:right">523</td>
- *       <td style="text-align:right">1103</td>
- *       <td style="text-align:right">1777</td>
- *     </tr>
- *     <tr>
- *       <td>ReferenceArraySet</td>
- *       <td style="text-align:right"><b>141</b></td>
- *       <td style="text-align:right">413</td>
- *       <td style="text-align:right"><b>442</b></td>
- *       <td style="text-align:right">1697</td>
- *     </tr>
- *     <tr>
- *       <td>ReferenceOpenHashSet</td>
- *       <td style="text-align:right">339</td>
- *       <td style="text-align:right">811</td>
- *       <td style="text-align:right">857</td>
- *       <td style="text-align:right">3007</td>
- *     </tr>
- *   </tbody>
- * </table>
+ * <p>An archetype matches when it includes every required type and excludes every forbidden
+ * type. An empty query accepts all archetypes. Duplicate conditions have no effect. Requiring
+ * and excluding the same type produces no matches. Types are compared by class identity.</p>
+ *
+ * <p>Configure the query on one thread. The scheduler selects committed pools before
+ * execution. Subsequent structural commands do not change that selection.</p>
  */
 public final class EntityQuery {
+    /**
+     * Component classes that every match must contain.
+     */
     private final ReferenceSet<Class<? extends CleanComponent>> mustHave;
+    /**
+     * Component classes excluded from all matches.
+     */
     private final ReferenceSet<Class<? extends CleanComponent>> mustNotHave;
 
     private EntityQuery() {
@@ -68,39 +32,44 @@ public final class EntityQuery {
         mustNotHave = new ReferenceArraySet<>();
     }
 
+    /**
+     * Creates a query without composition restrictions.
+     *
+     * @return An empty mutable query.
+     */
     @NonNull
     public static EntityQuery query() {
         return new EntityQuery();
     }
 
     /**
-     * <p>Prerequisites include:</p>
-     * <ul>
-     *     <li><code>component</code> is valid and registered</li>
-     * </ul>
+     * Requires a component on matching entities.
      *
-     * @param component The component class
-     * @return The query object
+     * @param component Exact component class to match.
+     * @return This query for chaining.
+     * @throws NullPointerException If the class is null.
      */
     @CanIgnoreReturnValue
     @NonNull
     public EntityQuery with(@NonNull Class<? extends CleanComponent> component) {
+        Preconditions.checkNotNull(component);
+
         mustHave.add(component);
         return this;
     }
 
     /**
-     * <p>Prerequisites include:</p>
-     * <ul>
-     *     <li><code>component</code> is valid and registered</li>
-     * </ul>
+     * Excludes entities with the specified component.
      *
-     * @param component The component class
-     * @return The query object
+     * @param component Exact component class to match.
+     * @return This query for chaining.
+     * @throws NullPointerException If the class is null.
      */
     @CanIgnoreReturnValue
     @NonNull
     public EntityQuery without(@NonNull Class<? extends CleanComponent> component) {
+        Preconditions.checkNotNull(component);
+
         mustNotHave.add(component);
         return this;
     }

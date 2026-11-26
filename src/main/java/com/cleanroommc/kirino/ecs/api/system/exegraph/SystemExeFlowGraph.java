@@ -8,118 +8,155 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
 
 /**
- * It guides the execution flow of ecs-systems.
- * You're supposed to instantiate an instance in {@link CleanWorld} to help you manage the system execution.
+ * Orders system updates and callbacks through a directed acyclic graph of barriers.
  *
- * @implNote The flow graphs should be immutable once constructed, and
- * the builder pattern ({@link Builder}) should be utilized to help constructing the flow graphs
+ * <p>A barrier waits for the work tracked by incoming transitions before invoking its callback
+ * and starting outgoing transitions. A built flow snapshots its topology and callback
+ * references. The same flow rejects overlapping runs.</p>
  */
 public interface SystemExeFlowGraph {
+    /**
+     * Reserved identifier of the initial barrier.
+     */
     String START_NODE = "__START__";
+    /**
+     * Reserved identifier of the terminal barrier.
+     */
     String END_NODE = "__END__";
 
     /**
-     * This method is blocking.
-     * Must not execute again before finishing the last execution.
-     * Thread safety is guaranteed.
+     * Runs the graph on the caller's thread and waits for tracked work.
      *
-     * @implNote Guarantee the thread safety and check the precondition (directly throw if needed) that the last execution is finished.
-     * @see #isExecuting()
+     * <p>On failure, the flow stops advancing through barriers and drains work already
+     * started before reporting the failure. Writes and callback side effects can survive.</p>
+     *
+     * @throws IllegalStateException If this flow is busy, its system is already managed by another flow, or its runtime epoch is unavailable.
+     * @throws RuntimeException      If a system, tracked task, or callback fails.
      */
     void execute();
 
     /**
-     * Async version of {@link #execute()}.
+     * Dispatches the graph and its barrier visits through an executor.
+     *
+     * <p>Terminal callbacks can run on the thread that completes tracked work. Cancellation
+     * of the returned observer affects only observation. Keep the executor available until
+     * accepted graph work finishes.</p>
+     *
+     * @param executor Executor for this flow and its barrier visits.
+     * @return An observer that completes after tracked work and terminal callbacks finish.
+     * @throws NullPointerException       If the executor is null.
+     * @throws IllegalStateException      If the flow is busy or its runtime epoch is unavailable.
+     * @throws RejectedExecutionException If the initial submission is rejected.
      */
     @NonNull
-    CompletableFuture<Void> executeAsync(Executor executor);
+    CompletableFuture<Void> executeAsync(@NonNull Executor executor);
 
     /**
-     * @return Whether the execution is ongoing
-     * @implNote The flag should be volatile or guarded by the synchronization
+     * Reports whether this flow still holds its execution admission.
+     *
+     * @return Whether a run is in progress. Observe the execution result to determine success.
      */
     boolean isExecuting();
 
     /**
-     * The builder of an execution flow graph.
-     * The execution graph must be a DAG and everything must start from {@link #START_NODE} and ends in {@link #END_NODE}.
+     * Configures a flow whose nodes are reachable from {@link SystemExeFlowGraph#START_NODE}
+     * and can reach {@link SystemExeFlowGraph#END_NODE}.
+     *
+     * @param <TFlowGraph> Type of flow constructed by this builder.
      */
     interface Builder<TFlowGraph extends SystemExeFlowGraph> {
         /**
-         * <p>Must not input {@link #START_NODE} or {@link #END_NODE}.</p>
-         * <p>Inputting the same <code>nodeID</code> again overrides the old node.</p>
-         * <br>
-         * <p>
-         * {@link #START_NODE} and {@link #END_NODE} are built-in node IDs.
-         * Moreover, everything must start from {@link #START_NODE} and end in {@link #END_NODE}.
+         * Adds a barrier or replaces the callback of an existing custom barrier.
          *
-         * @param nodeID The node ID
-         * @implNote Check the precondition that <code>nodeID</code> isn't {@link #START_NODE} or {@link #END_NODE}
+         * @param nodeID   Non-null identifier distinct from the reserved start and end identifiers.
+         * @param callback Action invoked after incoming work succeeds, or null for no action.
+         * @return This builder.
+         * @throws IllegalArgumentException If the identifier is reserved.
+         * @throws NullPointerException     If the identifier is null.
          */
         @CanIgnoreReturnValue
         @NonNull
         Builder<TFlowGraph> addBarrierNode(@NonNull String nodeID, @Nullable Runnable callback);
 
         /**
-         * A dummy version of {@link #addTransition(CleanSystem, String, String)}.
-         * No system will be executed but you can still have callbacks.
+         * Adds an ordering edge that launches no system.
+         *
+         * @param fromNodeID Identifier of an existing source barrier.
+         * @param toNodeID   Identifier of an existing destination barrier.
+         * @return This builder.
+         * @throws NullPointerException If either identifier is null or unknown.
          */
         @CanIgnoreReturnValue
         @NonNull
         Builder<TFlowGraph> addDummyTransition(@NonNull String fromNodeID, @NonNull String toNodeID);
 
         /**
-         * Must not input the nodes that don't exist. {@link #START_NODE} and {@link #END_NODE} are allowed as built-in nodes.
+         * Adds an edge that updates a system and tracks its work before the destination barrier.
          *
-         * @param task       The ecs-system instance
-         * @param fromNodeID From
-         * @param toNodeID   To
-         * @implNote Check the precondition that <code>fromNodeID</code> and <code>toNodeID</code> are valid
+         * @param task       System instance. A single-flow builder accepts one edge with the exact configured system type.
+         * @param fromNodeID Identifier of an existing source barrier.
+         * @param toNodeID   Identifier of an existing destination barrier.
+         * @return This builder.
+         * @throws NullPointerException     If the system is null or a barrier identifier is null or unknown.
+         * @throws IllegalArgumentException If the system has the wrong type for the builder.
+         * @throws IllegalStateException    If a single-flow builder already has a system transition.
          */
         @CanIgnoreReturnValue
         @NonNull
         Builder<TFlowGraph> addTransition(@NonNull CleanSystem task, @NonNull String fromNodeID, @NonNull String toNodeID);
 
         /**
-         * Set the callback of the {@link #START_NODE}.
+         * Sets the action that runs at the start barrier before outgoing transitions.
          *
-         * <p>A <code>null</code> callback clears the current callback.</p>
+         * @param callback Start action, or null to clear it.
+         * @return This builder.
          */
         @CanIgnoreReturnValue
         @NonNull
         Builder<TFlowGraph> setStartNodeCallback(@Nullable Runnable callback);
 
         /**
-         * Set the callback of the {@link #END_NODE}.
+         * Sets the action that runs at the end barrier after its dependencies succeed.
          *
-         * <p>A <code>null</code> callback clears the current callback.</p>
+         * @param callback End action, or null to clear it.
+         * @return This builder.
          */
         @CanIgnoreReturnValue
         @NonNull
         Builder<TFlowGraph> setEndNodeCallback(@Nullable Runnable callback);
 
         /**
-         * Set the callback of the method <code>{@link SystemExeFlowGraph#execute()} / {@link SystemExeFlowGraph#executeAsync(Executor)}</code>.
-         * It's different from {@link #setEndNodeCallback(Runnable)} since the end node callback will be ran
-         * before the finish callback.
+         * Sets the terminal success action after the end barrier and tracked work succeed.
          *
-         * <p>A <code>null</code> callback clears the current callback.</p>
+         * @param callback Success action, or null to clear it.
+         * @return This builder.
          */
         @CanIgnoreReturnValue
         @NonNull
         Builder<TFlowGraph> setFinishCallback(@Nullable Runnable callback);
 
+        /**
+         * Sets the terminal failure action once started work has drained.
+         *
+         * <p>Failures thrown by the failure action are combined with the original failure.
+         * A rejected initial submission is thrown at the call site.</p>
+         *
+         * @param callback Consumer of the execution failure, or null to clear it.
+         * @return This builder.
+         */
         @CanIgnoreReturnValue
         @NonNull
         Builder<TFlowGraph> setFailureCallback(@Nullable Consumer<Throwable> callback);
 
         /**
-         * @return The building result
-         * @implNote Check the precondition that the execution graph is a DAG and
-         * everything starts from {@link #START_NODE} and ends in {@link #END_NODE}
+         * Validates and snapshots the graph and callback references.
+         *
+         * @return A flow independent of subsequent builder edits.
+         * @throws IllegalStateException If the topology is invalid or the required system transition is missing.
          */
         @NonNull
         TFlowGraph build();

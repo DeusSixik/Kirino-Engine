@@ -49,14 +49,13 @@ public class ResourceStorageBenchmark {
 
     @Benchmark
     public Object guavaLazyMessage() {
-        Preconditions.checkNotNull(slot);
-        Object result = values.get(slot.id());
-        return Preconditions.checkNotNull(result, "Can't resolve the resource \"%s\".", slot);
+        return storage.get(slot);
     }
 
     @Benchmark
     public Object manualNullCheck() {
-        return storage.get(slot);
+        Preconditions.checkNotNull(slot);
+        return getResource(slot);
     }
 
     @Benchmark

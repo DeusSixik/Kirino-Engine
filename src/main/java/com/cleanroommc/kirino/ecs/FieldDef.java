@@ -33,9 +33,8 @@ final class FieldDef {
             }
             case STRUCT -> {
                 StructDef structDef = structRegistry.getStructDef(structTypeName);
-                if (structDef == null) {
-                    throw new IllegalStateException("Struct type " + structTypeName + " doesn't exist.");
-                }
+                Preconditions.checkState(structDef != null, "Struct type %s doesn't exist.", structTypeName);
+
                 return "FieldDef{ structType=(" + structTypeName + ")" + structDef.toString(structRegistry) + " }";
             }
             case null, default -> {

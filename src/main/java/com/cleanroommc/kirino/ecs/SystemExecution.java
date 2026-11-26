@@ -10,6 +10,13 @@ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Owns exclusive managed execution and actual completion tracking for one system.
+ *
+ * <p>The thread-local binding captures jobs launched during update on the same thread.
+ * Registration deduplicates actual futures by identity. The flow owns the resulting
+ * snapshot until it drains the work and finishes terminal callbacks.</p>
+ */
 final class SystemExecution {
     private static final ThreadLocal<SystemExecution> CURRENT = new ThreadLocal<>();
 
@@ -102,6 +109,12 @@ final class SystemExecution {
         tasks.add(task);
     }
 
+    /**
+     * Combines the actual futures registered by the completed update.
+     *
+     * @return A future that drains every registered task and reports their combined failure.
+     * @throws IllegalStateException If registration is still in progress.
+     */
     synchronized CompletableFuture<Void> completion() {
         Preconditions.checkState(updateThread == null, "The system update has not finished registering work.");
         if (completion == null) {

@@ -3,12 +3,14 @@ package com.cleanroommc.kirino.ecs;
 import com.cleanroommc.kirino.ecs.api.component.CleanComponent;
 import com.cleanroommc.kirino.ecs.api.job.ParallelJob;
 import com.cleanroommc.kirino.ecs.api.storage.PrimitiveArray;
-import com.google.common.base.Preconditions;
 import org.jspecify.annotations.Nullable;
 
 import java.lang.invoke.MethodType;
 import java.util.Map;
 
+/**
+ * Stores the constructor and binding plan validated during job registration.
+ */
 final class JobDefinition {
     private static final PrimitiveArray[] NO_COLUMNS = new PrimitiveArray[0];
     private static final Object[] NO_EXTERNAL_DATA = new Object[0];
@@ -37,24 +39,37 @@ final class JobDefinition {
         return columns;
     }
 
+    /**
+     * Validates and captures external references before worker submission.
+     *
+     * @param externalData Map kept stable during preparation, or null if the job has no external bindings.
+     * @return References in binding order. The objects remain shared with their owners.
+     * @throws IllegalArgumentException If a required key is absent or its value has the wrong type.
+     */
     Object[] resolveExternalData(@Nullable Map<String, Object> externalData) {
         if (externalBindings.length == 0) {
             return NO_EXTERNAL_DATA;
         }
 
-        Preconditions.checkArgument(externalData != null,
-            "Argument \"externalData\" must not be null since there are %s external data queries.",
-            externalBindings.length);
+        if (externalData == null) {
+            throw new IllegalArgumentException("Argument \"externalData\" must not be null since there are "
+                + externalBindings.length + " external data queries.");
+        }
 
         Object[] values = new Object[externalBindings.length];
         for (int i = 0; i < externalBindings.length; i++) {
             ExternalBinding binding = externalBindings[i];
             String key = binding.key;
-            Preconditions.checkArgument(externalData.containsKey(key),
-                "Missing the entry \"%s\" from \"externalData\".", key);
+            if (!externalData.containsKey(key)) {
+                throw new IllegalArgumentException("Missing the entry \"" + key + "\" from \"externalData\".");
+            }
+
             Object value = externalData.get(key);
-            Preconditions.checkArgument(value == null ? !binding.primitive : binding.valueType.isInstance(value),
-                "External data \"%s\" for %s requires %s.", key, binding.target, binding.valueType.getName());
+            if (value != null ? !binding.valueType.isInstance(value) : binding.primitive) {
+                throw new IllegalArgumentException("External data \"" + key + "\" for " + binding.target
+                    + " requires " + binding.valueType.getName() + ".");
+            }
+
             values[i] = value;
         }
         return values;

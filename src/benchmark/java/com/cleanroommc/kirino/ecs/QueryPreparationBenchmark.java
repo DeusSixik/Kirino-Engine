@@ -211,4 +211,3 @@ public class QueryPreparationBenchmark {
     public static class M7 implements CleanComponent {}
     public static class M8 implements CleanComponent {}
 }
-

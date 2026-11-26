@@ -1,7 +1,6 @@
 package com.cleanroommc.kirino.ecs;
 
 import com.cleanroommc.kirino.ecs.api.EntityQuery;
-
 import com.cleanroommc.kirino.ecs.api.component.CleanComponent;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
@@ -17,6 +16,17 @@ import java.util.function.Supplier;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EntityQueryTest {
+    @Test
+    void conditions_nullTypes_areRejectedBeforeChangingTheQuery() {
+        EntityQuery query = EntityQuery.query().with(A.class).without(B.class);
+        assertThrows(NullPointerException.class, () -> query.with(null));
+        assertThrows(NullPointerException.class, () -> query.without(null));
+        assertEquals(1, QueryAccess.mustHave(query).size());
+        assertEquals(1, QueryAccess.mustNotHave(query).size());
+        assertTrue(QueryAccess.mustHave(query).contains(A.class));
+        assertTrue(QueryAccess.mustNotHave(query).contains(B.class));
+    }
+
     @Test
     void conditions_repeatedWithAndWithout_keepOnlyUniqueTypesInEachSet() {
         EntityQuery query = EntityQuery.query();

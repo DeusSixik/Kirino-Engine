@@ -2,131 +2,172 @@ package com.cleanroommc.kirino.ecs.api.storage;
 
 import org.jspecify.annotations.NonNull;
 
+/**
+ * A typed, mutable view of one primitive column in one archetype pool.
+ *
+ * <p>A job may use an injected column only during its launch. Do not retain it, hand it to
+ * untracked work, or use a column for rows outside the job's assigned work. The index
+ * passed to the job is a storage row. Column length describes capacity and can include
+ * unused rows. Setters write directly to committed storage and their effects can survive
+ * a failed job.</p>
+ *
+ * <p>Jobs may share the same column. The scheduler protects against structural changes
+ * while work is active. The caller is responsible for ordering or synchronizing accesses
+ * that overlap on the same rows and include a write.</p>
+ */
 public interface PrimitiveArray {
 
     /**
-     * Getter for bytes.
+     * Reads a byte value.
      *
-     * @param index The index
-     * @return The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @return The value stored at the row.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     byte getByte(int index);
 
     /**
-     * Getter for shorts.
+     * Reads a short value.
      *
-     * @param index The index
-     * @return The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @return The value stored at the row.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     short getShort(int index);
 
     /**
-     * Getter for integers.
+     * Reads a int value.
      *
-     * @param index The index
-     * @return The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @return The value stored at the row.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     int getInt(int index);
 
     /**
-     * Getter for longs.
+     * Reads a long value.
      *
-     * @param index The index
-     * @return The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @return The value stored at the row.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     long getLong(int index);
 
     /**
-     * Getter for floats.
+     * Reads a float value.
      *
-     * @param index The index
-     * @return The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @return The value stored at the row.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     float getFloat(int index);
 
     /**
-     * Getter for doubles.
+     * Reads a double value.
      *
-     * @param index The index
-     * @return The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @return The value stored at the row.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     double getDouble(int index);
 
     /**
-     * Getter for booleans.
+     * Reads a boolean value.
      *
-     * @param index The index
-     * @return The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @return The value stored at the row.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     boolean getBool(int index);
 
     /**
-     * Setter for bytes.
+     * Writes a byte value.
      *
-     * @param index The index
-     * @param value The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @param value The value to store.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     void setByte(int index, byte value);
 
     /**
-     * Setter for shorts.
+     * Writes a short value.
      *
-     * @param index The index
-     * @param value The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @param value The value to store.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     void setShort(int index, short value);
 
     /**
-     * Setter for integers.
+     * Writes a int value.
      *
-     * @param index The index
-     * @param value The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @param value The value to store.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     void setInt(int index, int value);
 
     /**
-     * Setter for longs.
+     * Writes a long value.
      *
-     * @param index The index
-     * @param value The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @param value The value to store.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     void setLong(int index, long value);
 
     /**
-     * Setter for floats.
+     * Writes a float value.
      *
-     * @param index The index
-     * @param value The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @param value The value to store.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     void setFloat(int index, float value);
 
     /**
-     * Setter for doubles.
+     * Writes a double value.
      *
-     * @param index The index
-     * @param value The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @param value The value to store.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     void setDouble(int index, double value);
 
     /**
-     * Setter for booleans.
+     * Writes a boolean value.
      *
-     * @param index The index
-     * @param value The value
+     * @param index Occupied row assigned to the job, between zero and {@link #length()} exclusive.
+     * @param value The value to store.
+     * @throws IllegalStateException     If the column has a different primitive type.
+     * @throws IndexOutOfBoundsException If the row lies outside the backing column.
      */
     void setBool(int index, boolean value);
 
     /**
-     * Returns the length.
+     * Returns the number of slots in the backing column.
      *
-     * @return The length
+     * @return Column capacity in rows.
      */
     int length();
 
     /**
-     * Returns the type of this array.
+     * Returns the one primitive type accepted by this column.
      *
-     * @return The type of the array.
+     * @return The storage type.
      */
     @NonNull
     PrimitiveArrayType type();

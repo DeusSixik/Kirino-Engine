@@ -10,6 +10,12 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.Map;
 
+/**
+ * Maps Java field types and registry names to scalar or struct definitions.
+ *
+ * <p>During bootstrap, definitions can refer to structs registered later in that stage.
+ * Lock validates that each definition matches its Java class before component compilation.</p>
+ */
 class FieldRegistry {
     public final StructRegistry structRegistry;
 
@@ -23,11 +29,14 @@ class FieldRegistry {
     private boolean lockRegistry = false;
 
     /**
-     * This method is the entry point to register field types.
+     * Registers one field definition by name and exact class during bootstrap.
      *
-     * @param name     The registry name of the field
-     * @param clazz    The corresponding class of the field
-     * @param fieldDef The actual field type layout
+     * @param name     Unique registry name.
+     * @param clazz    Java class represented by the definition.
+     * @param fieldDef Scalar shape or named struct definition.
+     * @throws IllegalStateException    If registration is closed or the name is taken.
+     * @throws IllegalArgumentException If the class is already registered.
+     * @throws NullPointerException     If an argument is null.
      */
     public void registerFieldType(
         @NonNull String name,
@@ -51,7 +60,10 @@ class FieldRegistry {
     }
 
     /**
-     * Register calls are no longer allowed after the lock call.
+     * Validates class bindings and closes registration.
+     *
+     * @throws IllegalStateException    If the registry is already locked.
+     * @throws IllegalArgumentException If a definition resolves to an incompatible or unknown Java type.
      */
     public void lock() {
         Preconditions.checkState(!lockRegistry, "The registry is already locked!");
@@ -180,8 +192,8 @@ class FieldRegistry {
         }
 
         FieldDef fieldDef = getFieldDef(fieldClass);
-        if (fieldDef == null) {
-            throw new IllegalArgumentException("Field class " + fieldInstance.getClass().getName() + " isn't registered.");
+        if(fieldDef == null) {
+            throw new IllegalArgumentException("Field type " + fieldInstance.getClass() + " isn't registered.");
         }
 
         if (fieldDef.fieldKind == FieldKind.SCALAR) {

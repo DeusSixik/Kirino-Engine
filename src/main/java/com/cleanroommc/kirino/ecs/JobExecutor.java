@@ -19,6 +19,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 
+/**
+ * Binds and partitions jobs while coordinating runtime admission and pool protection.
+ */
 final class JobExecutor {
     private final JobRegistry jobRegistry;
     private final EntityManager owner;
@@ -47,11 +50,13 @@ final class JobExecutor {
                                               @Nullable Map<String, Object> externalData,
                                               Executor executor) {
         if (!(manager instanceof EntityManager entityManager)) {
-            throw new IllegalArgumentException("Jobs require the built-in ECS entity manager implementation");
+            throw new IllegalArgumentException("Jobs require the built-in ECS entity manager implementation.");
         }
+
         if (owner != null && owner != entityManager) {
             throw new IllegalArgumentException("The scheduler and manager belong to different runtimes.");
         }
+
         RuntimeLifecycle.Lease lease = entityManager.lifecycle.acquire(entityManager.lifecycle.epoch());
         RuntimeLifecycle.Lease previous = lease.enter();
         Throwable failure = null;
@@ -67,13 +72,26 @@ final class JobExecutor {
         }
     }
 
+    /**
+     * Prepares and launches work under the supplied runtime lease.
+     *
+     * <p>Once a pool scope exists, success and failure transfer its ownership to
+     * {@link #finishExecution}. Catching {@link Throwable} covers user code, injected
+     * handles, and executor submission. Accepted tasks still drain before guards release,
+     * even when the caller receives a synchronous failure.</p>
+     *
+     * @param entityManager Manager admitted for this launch.
+     * @param clazz         Registered job class.
+     * @param externalData  Inputs for external bindings, or null when no bindings are required.
+     * @param executor      Executor that runs every accepted worker task.
+     * @param lease         Admission to retire after preparation and execution complete.
+     * @return Observer handle for the launch.
+     */
     private ExecutionHandle executeAccepted(EntityManager entityManager, Class<? extends ParallelJob> clazz,
                                             Map<String, Object> externalData, Executor executor,
                                             RuntimeLifecycle.Lease lease) {
         JobDefinition definition = jobRegistry.getDefinition(clazz);
-        if (definition == null) {
-            throw new IllegalStateException("Parallel job class " + clazz.getName() + " isn't registered.");
-        }
+        Preconditions.checkState(definition != null, "Parallel job type %s isn't registered.", clazz);
 
         Object[] externalValues = definition.resolveExternalData(externalData);
 
@@ -204,6 +222,14 @@ final class JobExecutor {
         }
     }
 
+    /**
+     * Drains accepted tasks and releases their structural guards.
+     *
+     * @param futures        Internal futures for all accepted submissions.
+     * @param execution      Scope owned by this completion chain.
+     * @param initialFailure Synchronous failure to preserve as the primary cause, or null.
+     * @return Actual completion after guard release. Later failures are combined with the initial cause.
+     */
     private static CompletableFuture<Void> finishExecution(List<CompletableFuture<Void>> futures,
                                                            EntityManager.ExecutionScope execution, Throwable initialFailure) {
         CompletableFuture<Void> result = new CompletableFuture<>();

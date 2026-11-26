@@ -7,6 +7,9 @@ import com.google.common.base.Preconditions;
 
 import java.util.Arrays;
 
+/**
+ * Adapts one primitive array to a column whose wrapper identity survives resize.
+ */
 final class HeapPrimitiveArray implements PrimitiveArray {
     private final PrimitiveArrayType type;
     private int length;
@@ -74,6 +77,13 @@ final class HeapPrimitiveArray implements PrimitiveArray {
         }
     }
 
+    /**
+     * Copies a primitive value directly between same-type columns.
+     *
+     * @param sourceRow Occupied source row within this column.
+     * @param target    Destination column of the same type, chosen by the transfer plan.
+     * @param targetRow Allocated destination row to fill before publication.
+     */
     void copyTo(int sourceRow, HeapPrimitiveArray target, int targetRow) {
         switch (type) {
             case BYTE -> target.byteArray[targetRow] = byteArray[sourceRow];
@@ -86,6 +96,12 @@ final class HeapPrimitiveArray implements PrimitiveArray {
         }
     }
 
+    /**
+     * Allocates a replacement array and copies the retained range.
+     *
+     * @param newLength Requested capacity in rows.
+     * @return The uninstalled primitive array with the same element type.
+     */
     Object resizedArray(int newLength) {
         return switch (type) {
             case BYTE -> Arrays.copyOf(byteArray, newLength);
@@ -98,6 +114,12 @@ final class HeapPrimitiveArray implements PrimitiveArray {
         };
     }
 
+    /**
+     * Installs a previously prepared backing array under structural access.
+     *
+     * @param array     Replacement array of the column's primitive type.
+     * @param newLength Length of the replacement array in rows.
+     */
     void replaceArray(Object array, int newLength) {
         switch (type) {
             case BYTE -> byteArray = (byte[]) array;
@@ -113,85 +135,85 @@ final class HeapPrimitiveArray implements PrimitiveArray {
 
     @Override
     public byte getByte(int index) {
-        Preconditions.checkState(type == PrimitiveArrayType.BYTE, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.BYTE);
         return byteArray[index];
     }
 
     @Override
     public void setByte(int index, byte value) {
-        Preconditions.checkState(type == PrimitiveArrayType.BYTE, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.BYTE);
         byteArray[index] = value;
     }
 
     @Override
     public short getShort(int index) {
-        Preconditions.checkState(type == PrimitiveArrayType.SHORT, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.SHORT);
         return shortArray[index];
     }
 
     @Override
     public void setShort(int index, short value) {
-        Preconditions.checkState(type == PrimitiveArrayType.SHORT, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.SHORT);
         shortArray[index] = value;
     }
 
     @Override
     public int getInt(int index) {
-        Preconditions.checkState(type == PrimitiveArrayType.INT, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.INT);
         return intArray[index];
     }
 
     @Override
     public void setInt(int index, int value) {
-        Preconditions.checkState(type == PrimitiveArrayType.INT, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.INT);
         intArray[index] = value;
     }
 
     @Override
     public long getLong(int index) {
-        Preconditions.checkState(type == PrimitiveArrayType.LONG, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.LONG);
         return longArray[index];
     }
 
     @Override
     public void setLong(int index, long value) {
-        Preconditions.checkState(type == PrimitiveArrayType.LONG, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.LONG);
         longArray[index] = value;
     }
 
     @Override
     public float getFloat(int index) {
-        Preconditions.checkState(type == PrimitiveArrayType.FLOAT, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.FLOAT);
         return floatArray[index];
     }
 
     @Override
     public void setFloat(int index, float value) {
-        Preconditions.checkState(type == PrimitiveArrayType.FLOAT, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.FLOAT);
         floatArray[index] = value;
     }
 
     @Override
     public double getDouble(int index) {
-        Preconditions.checkState(type == PrimitiveArrayType.DOUBLE, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.DOUBLE);
         return doubleArray[index];
     }
 
     @Override
     public void setDouble(int index, double value) {
-        Preconditions.checkState(type == PrimitiveArrayType.DOUBLE, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.DOUBLE);
         doubleArray[index] = value;
     }
 
     @Override
     public boolean getBool(int index) {
-        Preconditions.checkState(type == PrimitiveArrayType.BOOL, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.BOOL);
         return booleanArray[index];
     }
 
     @Override
     public void setBool(int index, boolean value) {
-        Preconditions.checkState(type == PrimitiveArrayType.BOOL, "Wrong primitive column type.");
+        checkType(PrimitiveArrayType.BOOL);
         booleanArray[index] = value;
     }
 
@@ -203,5 +225,11 @@ final class HeapPrimitiveArray implements PrimitiveArray {
     @Override
     public PrimitiveArrayType type() {
         return type;
+    }
+
+    private void checkType(PrimitiveArrayType type) {
+        if(this.type != type) {
+            throw new IllegalArgumentException("Wrong primitive column type.");
+        }
     }
 }

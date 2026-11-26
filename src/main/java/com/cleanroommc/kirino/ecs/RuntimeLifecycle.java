@@ -8,12 +8,25 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Controls admission and draining under the manager monitor.
+ *
+ * <p>A lease begins before work preparation and retires after preparation and any
+ * followed work have finished. Drain completion is published outside the manager
+ * monitor so synchronous observer actions run outside that lock.</p>
+ */
 final class RuntimeLifecycle {
     private static final ThreadLocal<Lease> CURRENT = new ThreadLocal<>();
     private static final ThreadLocal<List<Lease>> ANCESTORS = new ThreadLocal<>();
     private final EntityManager manager;
+    /**
+     * Accepted leases that have not retired. Guarded by the manager monitor.
+     */
     private final List<Lease> active = new ObjectArrayList<>();
     private CleanECSRuntime.State state = CleanECSRuntime.State.RUNNING;
+    /**
+     * Generation checked by bound flows. A successful reset advances it without wrapping.
+     */
     private long epoch;
     private Stop stop;
     private Runnable clearScratch = () -> {
@@ -41,10 +54,22 @@ final class RuntimeLifecycle {
         }
     }
 
+    /**
+     * Checks that admission remains open. The caller must hold the manager monitor.
+     *
+     * @throws IllegalStateException If the runtime is stopping or closed.
+     */
     void requireRunning() {
         Preconditions.checkState(state == CleanECSRuntime.State.RUNNING, "The ECS runtime is not running.");
     }
 
+    /**
+     * Admits work under the manager monitor before user preparation runs.
+     *
+     * @param expectedEpoch Runtime epoch captured by the caller.
+     * @return The lease for the accepted work.
+     * @throws IllegalStateException If admission is closed or the epoch expired.
+     */
     Lease acquire(long expectedEpoch) {
         synchronized (manager) {
             requireRunning();
@@ -87,6 +112,13 @@ final class RuntimeLifecycle {
         return result;
     }
 
+    /**
+     * Drains accepted work, then cleans up on the caller's thread.
+     *
+     * @param reset Whether successful cleanup should reopen the runtime in a new epoch.
+     * @throws IllegalStateException If the caller would wait on its own execution or the runtime cannot transition.
+     * @throws RuntimeException      If draining or cleanup fails.
+     */
     void finish(boolean reset) {
         Lease current = CURRENT.get();
         Preconditions.checkState(current == null || current.owner() != this,
@@ -155,6 +187,9 @@ final class RuntimeLifecycle {
         }
     }
 
+    /**
+     * Tracks preparation and actual completion for one accepted job or flow.
+     */
     final class Lease {
         final CompletableFuture<Void> completion = new CompletableFuture<>();
         private boolean prepared;

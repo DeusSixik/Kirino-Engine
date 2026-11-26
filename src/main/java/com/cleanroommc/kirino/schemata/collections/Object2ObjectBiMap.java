@@ -1,5 +1,6 @@
 package com.cleanroommc.kirino.schemata.collections;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.BiMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import org.jspecify.annotations.NonNull;
@@ -58,7 +59,7 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
 
     private void checkWritable() {
         if (isLocked()) {
-            throw new UnsupportedOperationException("The bimap is locked");
+            throw new UnsupportedOperationException("The bimap is locked.");
         }
     }
 
@@ -196,9 +197,8 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
         }
         TKey previousKey = backward.putIfAbsent(value, key);
         if (previousKey != ABSENT) {
-            if (!force) {
-                throw new IllegalArgumentException("Value already present: " + value);
-            }
+            Preconditions.checkArgument(force, "Value already present: %s.", value);
+
             forward.remove(previousKey);
             backward.put(value, key);
         }
@@ -229,9 +229,9 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
     }
 
     @Override
-    public void replaceAll(BiFunction<? super TKey, ? super TValue, ? extends TValue> function) {
+    public void replaceAll(@NonNull BiFunction<? super TKey, ? super TValue, ? extends TValue> function) {
         checkWritable();
-        Objects.requireNonNull(function);
+        Preconditions.checkNotNull(function);
         if (isEmpty()) {
             return;
         }
@@ -242,9 +242,9 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
         while (iterator.hasNext()) {
             var entry = iterator.next();
             TValue value = function.apply(entry.getKey(), entry.getValue());
-            if (replacement.putIfAbsent(value, entry.getKey()) != ABSENT) {
-                throw new IllegalArgumentException("Value already present: " + value);
-            }
+            Preconditions.checkArgument(replacement.putIfAbsent(value, entry.getKey()) == ABSENT,
+                "Value already present: %s.", value);
+
             newValues[index++] = value;
         }
         checkWritable();
@@ -260,8 +260,8 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
     }
 
     @Override
-    public void forEach(BiConsumer<? super TKey, ? super TValue> action) {
-        traversal.accept(Objects.requireNonNull(action));
+    public void forEach(@NonNull BiConsumer<? super TKey, ? super TValue> action) {
+        traversal.accept(Preconditions.checkNotNull(action));
     }
 
     private static <K, V> void forEachDense(Snapshot current, BiConsumer<? super K, ? super V> action) {
@@ -365,8 +365,8 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
                 }
 
                 @Override
-                public void forEach(Consumer<? super TKey> action) {
-                    Objects.requireNonNull(action);
+                public void forEach(@NonNull Consumer<? super TKey> action) {
+                    Preconditions.checkNotNull(action);
                     Snapshot current = snapshot;
                     if (current == null) {
                         forward.keySet().forEach(action);
@@ -405,9 +405,8 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
                         @Override
                         public void remove() {
                             checkWritable();
-                            if (!removable) {
-                                throw new IllegalStateException();
-                            }
+                            Preconditions.checkState(removable);
+
                             TValue value = forward.get(currentKey);
                             iterator.remove();
                             backward.remove(value);
@@ -507,9 +506,8 @@ public class Object2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, TValue> 
                         @Override
                         public void remove() {
                             checkWritable();
-                            if (!removable) {
-                                throw new IllegalStateException();
-                            }
+                            Preconditions.checkState(removable);
+
                             TValue value = forward.get(currentKey);
                             iterator.remove();
                             backward.remove(value);

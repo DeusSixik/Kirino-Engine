@@ -1,5 +1,6 @@
 package com.cleanroommc.kirino.ecs;
 
+import com.cleanroommc.kirino.ecs.api.CleanECSRuntime;
 import com.cleanroommc.kirino.ecs.api.EntityCommands;
 import com.cleanroommc.kirino.ecs.api.EntityQuery;
 import com.cleanroommc.kirino.ecs.api.component.CleanComponent;
@@ -15,6 +16,7 @@ import com.google.common.base.Throwables;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
@@ -27,15 +29,32 @@ import java.util.Optional;
 import java.util.concurrent.CompletionException;
 import java.util.function.Function;
 
+/**
+ * Owns entity slots, pending structural commands, and archetype storage.
+ *
+ * <p>The manager monitor serializes changes to slots, queues, archetype topology, and
+ * execution admission. Projected composition tracks queued commands. Committed
+ * composition identifies published data. Workers access stable storage while holding
+ * an {@link ExecutionScope}.</p>
+ */
 final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManager {
     private enum State {
         FREE, RESERVED, ALIVE, PENDING_DESTROY, RETIRED
     }
 
     private static final class Slot {
+        /**
+         * Identity version of this slot. Slots retire at the maximum generation.
+         */
         int generation;
         State state = State.FREE;
+        /**
+         * Archetype storing the entity, or null before publication or after removal.
+         */
         Archetype committed;
+        /**
+         * Composition after accepted commands, used to validate the next command.
+         */
         Archetype projected;
         EntityCreateCallback createCallback;
         EntityDestroyCallback destroyCallback;
@@ -60,6 +79,9 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     private final Object2ObjectOpenHashMap<ArchetypeKey, Archetype> archetypes = new Object2ObjectOpenHashMap<>();
     private QueryCache queryCache;
     private int poolCount;
+    /**
+     * Commands in admission order, protected by the manager monitor.
+     */
     private final ObjectArrayList<EntityCommand> commands = new ObjectArrayList<>();
     private final ReferenceOpenHashSet<ArchetypeDataPool> shrinkCandidates = new ReferenceOpenHashSet<>();
     private final IntArrayList freeSlots = new IntArrayList();
@@ -67,8 +89,17 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     private final DestroyContext destroyContext = new DestroyContext();
     private Slot[] slots = new Slot[16];
     private int slotCount;
+    /**
+     * Count of admitted execution scopes that still protect storage.
+     */
     private int executions;
+    /**
+     * True while commit or cleanup owns the reusable callback contexts.
+     */
     private boolean flushing;
+    /**
+     * Saved partial-commit or guard-release failure. Further work is rejected until cleanup.
+     */
     private Throwable failure;
 
     EntityManager(ComponentRegistry componentRegistry) {
@@ -82,11 +113,12 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
     synchronized void reserveCapacity(List<Class<? extends CleanComponent>> components, int capacity) {
         requireAvailable();
-        Objects.requireNonNull(components);
+        Preconditions.checkNotNull(components);
         PoolCapacity.validateRequested(capacity);
-        if (executions != 0) {
-            throw new IllegalStateException("Cannot reserve capacity while jobs use this entity manager");
+        if(executions != 0) {
+            throw new IllegalStateException("Cannot reserve capacity while jobs use this entity manager.");
         }
+
         ArchetypeKey key = new ArchetypeKey(components);
         Archetype target = archetypes.get(key);
         if (target != null && target.pool != null) {
@@ -95,7 +127,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         }
 
         List<Class<? extends CleanComponent>> poolComponents = target == null ? components : target.components;
-        ArchetypeDataPool reserved = Objects.requireNonNull(createPool(poolComponents));
+        ArchetypeDataPool reserved = Preconditions.checkNotNull(createPool(poolComponents));
         reserved.reserveCapacity(capacity);
         if (target == null) {
             target = new Archetype(key, components);
@@ -110,8 +142,8 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
     EntityManager(ComponentRegistry componentRegistry,
                   Function<List<Class<? extends CleanComponent>>, ArchetypeDataPool> poolFactory) {
-        this.componentRegistry = Objects.requireNonNull(componentRegistry);
-        this.poolFactory = Objects.requireNonNull(poolFactory);
+        this.componentRegistry = Preconditions.checkNotNull(componentRegistry);
+        this.poolFactory = Preconditions.checkNotNull(poolFactory);
     }
 
     @NonNull
@@ -122,7 +154,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     @NonNull
     final synchronized List<@NonNull ArchetypeDataPool> startQuery(@NonNull EntityQuery query) {
         requireAvailable();
-        Objects.requireNonNull(query);
+        Preconditions.checkNotNull(query);
         List<ArchetypeDataPool> result = new ArrayList<>();
         var mustHave = QueryAccess.mustHave(query);
         var mustNotHave = QueryAccess.mustNotHave(query);
@@ -155,7 +187,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
     final synchronized ArchetypeDataPool[] selectPools(EntityQuery query) {
         requireAvailable();
-        Objects.requireNonNull(query);
+        Preconditions.checkNotNull(query);
         if (poolCount < QueryCache.MIN_POOLS) {
             return startQuery(query).toArray(ArchetypeDataPool[]::new);
         }
@@ -179,6 +211,16 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         return pools;
     }
 
+    /**
+     * Selects committed pools and acquires their guards under the manager monitor.
+     *
+     * <p>If acquisition fails, acquired guards are released in reverse order before
+     * the cause is propagated.</p>
+     *
+     * @param query Composition filter owned by the launch.
+     * @return Scope retaining the selected pools until all accepted work ends.
+     * @throws IllegalStateException If the manager cannot admit work.
+     */
     final synchronized ExecutionScope beginExecution(EntityQuery query) {
         requireAvailable();
         ExecutionScope scope = new ExecutionScope(selectPools(query));
@@ -207,11 +249,26 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     }
 
     synchronized void requireLifecycleAccess() {
-        Preconditions.checkState(!flushing, "Runtime lifecycle operations are forbidden inside entity callbacks.");
+        if(flushing) {
+            throw new IllegalStateException("Runtime lifecycle operations are forbidden inside entity callbacks.");
+        }
     }
 
+    /**
+     * Discards pending commands and releases committed storage after the runtime drain.
+     *
+     * <p>Attempts each remaining destroy callback once and clears the context on exit.
+     * Reset advances reusable generations so previously returned handles stay stale.</p>
+     *
+     * @param reset Whether to retain slot allocation for a new runtime epoch.
+     * @return The combined callback failure, or null if callbacks succeed.
+     * @throws IllegalStateException If an execution still protects storage.
+     */
     synchronized Throwable clearEntities(boolean reset) {
-        Preconditions.checkState(executions == 0, "Cannot clear entities while jobs use their storage.");
+        if(executions != 0) {
+            throw new IllegalStateException("Cannot clear entities while jobs use their storage.");
+        }
+
         flushing = true;
         Throwable cleanupFailure = null;
         try {
@@ -270,6 +327,9 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         return cleanupFailure;
     }
 
+    /**
+     * Protects selected pools and their command writer until actual execution completes.
+     */
     final class ExecutionScope implements AutoCloseable {
         private final ArchetypeDataPool[] pools;
         private final EntityCommands commandWriter = new ExecutionCommands(this);
@@ -279,14 +339,29 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
             this.pools = pools;
         }
 
+        /**
+         * Returns the pools selected at admission.
+         *
+         * @return The scope-owned array. Read it while the scope is open.
+         */
         ArchetypeDataPool[] pools() {
             return pools;
         }
 
+        /**
+         * Returns the writer bound to this execution.
+         *
+         * @return The command writer valid while this scope is open.
+         */
         EntityCommands commands() {
             return commandWriter;
         }
 
+        /**
+         * Releases all pool guards once under the manager monitor.
+         *
+         * <p>A release failure poisons the manager after the other releases have been attempted.</p>
+         */
         @Override
         public void close() {
             synchronized (EntityManager.this) {
@@ -395,14 +470,20 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
         private void requireOpen() {
             requireHealthy();
-            Preconditions.checkState(!execution.closed, "The entity command writer's execution has ended.");
+
+            if(execution.closed) {
+                throw new IllegalStateException("The entity command writer's execution has ended.");
+            }
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public synchronized void flush() {
         requireAvailable();
-        if (executions != 0) {
-            throw new IllegalStateException("Cannot flush while jobs use this entity manager");
+        if(executions != 0) {
+            throw new IllegalStateException("Cannot flush while jobs use this entity manager.");
         }
 
         int size = commands.size();
@@ -410,16 +491,19 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         if (size == 0) {
             return;
         }
+
         flushing = true;
         try {
             Object[] objElements = commands.elements();
             for (int i = 0; i < size; i++) {
                 EntityCommand command = (EntityCommand) objElements[i];
                 Slot slot = slot(command.index());
-                if (slot.generation != command.generation()
-                    || slot.state == State.FREE || slot.state == State.RETIRED) {
-                    throw new IllegalStateException("Expired entity command at index=" + command.index());
+
+                if(!(slot.generation == command.generation()
+                    && slot.state != State.FREE && slot.state != State.RETIRED)) {
+                    throw new IllegalStateException("Expired entity command at index=" + command.index() + ".");
                 }
+
                 switch (command.type()) {
                     case CREATE -> create(slot, command);
                     case DESTROY -> destroy(slot, command.index());
@@ -446,6 +530,12 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         }
     }
 
+    /**
+     * Invokes the create callback before publication of the committed values.
+     *
+     * @param slot    Reserved slot owned by this command.
+     * @param command CREATE command with validated component classes and borrowed payloads.
+     */
     private void create(Slot slot, EntityCommand command) {
         Archetype target = archetypes.get(command.target());
         ArchetypeDataPool pool = pool(target);
@@ -465,6 +555,12 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         slot.createCallback = null;
     }
 
+    /**
+     * Invokes the remaining destroy callback once, removes the row, and advances the generation.
+     *
+     * @param slot  Slot owning the committed row.
+     * @param index Entity ID in the slot table.
+     */
     private void destroy(Slot slot, int index) {
         Archetype old = slot.committed;
         if (slot.destroyCallback != null) {
@@ -494,6 +590,12 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         }
     }
 
+    /**
+     * Copies shared columns into the target archetype before removing the source row.
+     *
+     * @param slot    Slot with a committed source archetype.
+     * @param command Accepted ADD or REMOVE specifying the target.
+     */
     private void migrate(Slot slot, EntityCommand command) {
         Archetype old = slot.committed;
         Archetype target = archetypes.get(command.target());
@@ -516,11 +618,21 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         return createEntityInternal(destroyCallback, createCallback, components);
     }
 
+    /**
+     * Validates and reserves a slot while holding the manager monitor.
+     *
+     * <p>The caller has checked manager health and has normal admission or an open scope.</p>
+     *
+     * @param destroyCallback Optional callback for removal of committed data.
+     * @param createCallback  Optional callback that prepares the payload during commit.
+     * @param components      Registered payload values with distinct component classes.
+     * @return A handle for the reserved generation.
+     */
     private CleanEntityHandle createEntityInternal(EntityDestroyCallback destroyCallback,
                                                    EntityCreateCallback createCallback, CleanComponent[] components) {
-        Objects.requireNonNull(components);
+        Preconditions.checkNotNull(components);
         ObjectArrayView<CleanComponent> values = ObjectArrayView.copyOf(components);
-        List<Class<? extends CleanComponent>> types = new ArrayList<>(values.size());
+        List<Class<? extends CleanComponent>> types = new ReferenceArrayList<>(values.size());
         for (CleanComponent value : values.elements()) {
             validate(value);
             types.add(value.getClass());
@@ -580,7 +692,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     }
 
     private boolean enqueueSetComponent(int index, Slot slot, CleanComponent component) {
-        Objects.requireNonNull(component);
+        Preconditions.checkNotNull(component);
         if (!slot.projected.key.contains(component.getClass())) {
             return false;
         }
@@ -601,12 +713,12 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     }
 
     private boolean enqueueAddComponent(int index, Slot slot, CleanComponent component) {
-        Objects.requireNonNull(component);
+        Preconditions.checkNotNull(component);
         if (slot.projected.key.contains(component.getClass())) {
             return false;
         }
         validate(component);
-        List<Class<? extends CleanComponent>> types = new ArrayList<>(slot.projected.components);
+        List<Class<? extends CleanComponent>> types = new ReferenceArrayList<>(slot.projected.components);
         types.add(component.getClass());
         Archetype target = archetype(types);
         commands.add(new EntityCommand(index, slot.generation, EntityCommand.Type.ADD_COM,
@@ -626,11 +738,11 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     }
 
     private boolean enqueueRemoveComponent(int index, Slot slot, Class<? extends CleanComponent> component) {
-        Objects.requireNonNull(component);
+        Preconditions.checkNotNull(component);
         if (!slot.projected.key.contains(component)) {
             return false;
         }
-        List<Class<? extends CleanComponent>> types = new ArrayList<>(slot.projected.components);
+        List<Class<? extends CleanComponent>> types = new ReferenceArrayList<>(slot.projected.components);
         types.removeIf(type -> type == component);
         Archetype target = archetype(types);
         commands.add(new EntityCommand(index, slot.generation, EntityCommand.Type.REMOVE_COM,
@@ -640,7 +752,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     }
 
     synchronized boolean isValid(int index, int generation) {
-        return lifecycle.state() == com.cleanroommc.kirino.ecs.api.CleanECSRuntime.State.RUNNING
+        return lifecycle.state() == CleanECSRuntime.State.RUNNING
             && failure == null && index >= 0 && index < slotCount && acceptsCommands(slots[index], generation);
     }
 
@@ -654,7 +766,9 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     synchronized <T extends CleanComponent> Optional<T> readComponent(int index, int generation, Class<T> component) {
         requireAvailable();
         Preconditions.checkNotNull(component);
-        Preconditions.checkState(executions == 0, "Cannot read component copies while jobs use this entity manager.");
+        if (executions != 0) {
+            throw new IllegalStateException("Cannot read component copies while jobs use this entity manager.");
+        }
 
         if (!isAlive(index, generation) || !slots[index].committed.key.contains(component)) {
             return Optional.empty();
@@ -664,7 +778,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     }
 
     synchronized boolean isAlive(int index, int generation) {
-        return lifecycle.state() == com.cleanroommc.kirino.ecs.api.CleanECSRuntime.State.RUNNING
+        return lifecycle.state() == CleanECSRuntime.State.RUNNING
             && failure == null && index >= 0 && index < slotCount
             && slots[index].generation == generation && slots[index].state == State.ALIVE;
     }
@@ -684,7 +798,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
     private ArchetypeDataPool pool(Archetype archetype) {
         if (archetype.pool == null) {
-            archetype.pool = Objects.requireNonNull(createPool(archetype.components));
+            archetype.pool = Preconditions.checkNotNull(createPool(archetype.components));
             poolCount++;
             if (queryCache != null) {
                 queryCache.clear();
@@ -704,7 +818,7 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
     }
 
     private void validate(CleanComponent component) {
-        Objects.requireNonNull(component);
+        Preconditions.checkNotNull(component);
         componentRegistry.getCodec(component.getClass()).validate(component);
     }
 
@@ -722,7 +836,9 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
         @Override
         public <T extends CleanComponent> T getComponent(Class<T> component) {
-            Preconditions.checkState(components != null, "The entity create context is no longer active.");
+            if (component == null) {
+                throw new IllegalArgumentException("The entity create context is no longer active.");
+            }
             Preconditions.checkNotNull(component);
 
             for (CleanComponent value : components) {
@@ -740,10 +856,11 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
         @Override
         public <T extends CleanComponent> T getComponent(Class<T> component) {
-            Preconditions.checkState(pool != null, "The entity destroy context is no longer active.");
+            checkPoolNull();
             Preconditions.checkNotNull(component);
-            Preconditions.checkArgument(pool.components.contains(component),
-                "The entity does not contain component %s.", component.getName());
+            if (!pool.components.contains(component)) {
+                throw new IllegalArgumentException("The entity does not contain component " + component.getName() + ".");
+            }
 
             return component.cast(pool.getComponent(entityID, component));
         }
@@ -784,10 +901,19 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
         }
 
         private PrimitiveArray field(Class<? extends CleanComponent> component, String[] path, PrimitiveArrayType expected) {
-            Preconditions.checkState(pool != null, "The entity destroy context is no longer active.");
+            checkPoolNull();
+
             PrimitiveArray array = pool.getArray(component, path);
-            Preconditions.checkArgument(array.type() == expected, "The field has a different primitive type.");
+            if (array.type() != expected) {
+                throw new IllegalArgumentException("The field has a different primitive type.");
+            }
             return array;
+        }
+
+        private void checkPoolNull() {
+            if (pool == null) {
+                throw new IllegalStateException("The entity destroy context is no longer active.");
+            }
         }
     }
 
@@ -798,10 +924,11 @@ final class EntityManager implements com.cleanroommc.kirino.ecs.api.EntityManage
 
     private void requireHealthy() {
         if (failure != null) {
-            throw new IllegalStateException("Entity manager failed during commit or execution release", failure);
+            throw new IllegalStateException("Entity manager failed during commit or execution release.", failure);
         }
+
         if (flushing) {
-            throw new IllegalStateException("Entity manager cannot be accessed from lifecycle callbacks");
+            throw new IllegalStateException("Entity manager cannot be accessed from lifecycle callbacks.");
         }
     }
 }

@@ -218,4 +218,3 @@ final class PreviousObject2ObjectBiMap<TKey, TValue> extends AbstractMap<TKey, T
         return inverse;
     }
 }
-

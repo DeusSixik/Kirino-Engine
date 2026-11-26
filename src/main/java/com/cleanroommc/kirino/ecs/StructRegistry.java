@@ -3,12 +3,17 @@ package com.cleanroommc.kirino.ecs;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import it.unimi.dsi.fastutil.objects.*;
-import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 
+/**
+ * Registers nested value schemas and resolves them before component preparation.
+ *
+ * <p>Forward references can be registered before their target. Layout preparation
+ * rejects cycles, and lock binds codecs before the registry is shared with sessions.</p>
+ */
 class StructRegistry {
 
     private final Map<Class<?>, Data> structDataByClass = new Reference2ObjectOpenHashMap<>();
@@ -18,13 +23,15 @@ class StructRegistry {
     private boolean lockRegistry = false;
 
     /**
-     * This method is the entry point to register struct types.
-     * <code>memberLayout.fieldNames</code> must match <code>structDef.fields</code> one by one.
+     * Registers a named struct and its Java member order for later layout resolution.
      *
-     * @param name         The registry name of the struct
-     * @param clazz        The corresponding class of the struct
-     * @param memberLayout The metadata of the struct class
-     * @param structDef    The actual struct type layout
+     * @param name         Unique struct registry name.
+     * @param clazz        Exact concrete Java class for the struct.
+     * @param memberLayout Field names ordered to match the struct definition.
+     * @param structDef    Registered field definitions in member order.
+     * @throws IllegalStateException    If registration is closed or the name is taken.
+     * @throws IllegalArgumentException If the class is already registered.
+     * @throws NullPointerException     If a required argument is null.
      */
     public synchronized void registerStructType(
         @NonNull String name,
@@ -49,7 +56,10 @@ class StructRegistry {
     }
 
     /**
-     * Register calls are no longer allowed after the lock call.
+     * Resolves struct layouts and prepares codecs before closing registration.
+     *
+     * @throws IllegalStateException    If the registry is already locked.
+     * @throws IllegalArgumentException If a definition is invalid, cyclic, or references an unknown struct.
      */
     public synchronized void lock() {
         Preconditions.checkState(!lockRegistry, "The registry is already locked!");
@@ -65,7 +75,7 @@ class StructRegistry {
         lockRegistry = true;
     }
 
-    @NotNull
+    @NonNull
     public ImmutableMap<String, Data> getStructDataMap() {
         return ImmutableMap.copyOf(structData);
     }
@@ -143,7 +153,7 @@ class StructRegistry {
     }
 
     public SchemaLayout getLayout(String name) {
-        Data data = structData.get(Objects.requireNonNull(name));
+        Data data = structData.get(Preconditions.checkNotNull(name));
         Preconditions.checkArgument(data != null, "Struct type %s doesn't exist.", name);
         SchemaLayout layout = data.layout;
         return layout == null ? prepareLayout(name) : layout;
@@ -170,7 +180,7 @@ class StructRegistry {
             return compiled.get(name);
         }
         if (!visiting.add(name)) {
-            throw new IllegalArgumentException("Cyclic struct definition: " + String.join(" -> ", visiting) + " -> " + name);
+            throw new IllegalArgumentException("Cyclic struct definition: " + String.join(" -> ", visiting) + " -> " + name + ".");
         }
         SchemaLayout layout = SchemaCompiler.compile(name, data.structClass, data.structDef.fields, data.memberLayout,
             nested -> compileLayout(nested, compiled, visiting));
@@ -207,11 +217,13 @@ class StructRegistry {
      */
     @Nullable
     public Object newStruct(@NonNull String name, @NonNull Object @NonNull ... args) {
-        Objects.requireNonNull(name);
-        Objects.requireNonNull(args);
+        Preconditions.checkNotNull(name);
+        Preconditions.checkNotNull(args);
+
         for (Object arg : args) {
-            Objects.requireNonNull(arg);
+            Preconditions.checkNotNull(arg);
         }
+
         Data data = structData.get(name);
         return data == null ? null : codec(data).create(args);
     }
@@ -219,10 +231,10 @@ class StructRegistry {
     // -----Struct Deconstruction-----
 
     public @NonNull Object @NonNull [] flattenStruct(@NonNull Object structInstance) {
-        Data data = structDataByClass.get(Objects.requireNonNull(structInstance).getClass());
-        if (data == null) {
-            throw new IllegalArgumentException("Struct class isn't registered: " + structInstance.getClass().getName());
-        }
+        Class<?> structClass = Preconditions.checkNotNull(structInstance).getClass();
+        Data data = structDataByClass.get(structClass);
+        Preconditions.checkArgument(data != null, "Struct type %s isn't registered.", structClass);
+
         return codec(data).flatten(structInstance);
     }
 

@@ -19,6 +19,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Resolves annotated job fields and constructors before the scheduler accepts launches.
+ */
 final class JobRegistry {
     private final Map<Class<? extends ParallelJob>, JobDefinition> definitions = new Reference2ObjectOpenHashMap<>();
 
@@ -78,6 +81,13 @@ final class JobRegistry {
         }
     }
 
+    /**
+     * Validates the constructor and binds all annotations before publishing a job definition.
+     *
+     * @param clazz Concrete job class with a public no-argument constructor.
+     * @throws NullPointerException If the class is null.
+     * @throws RuntimeException     If the constructor or a requested binding is invalid.
+     */
     public void registerParallelJob(Class<? extends ParallelJob> clazz) {
         Preconditions.checkNotNull(clazz);
         Preconditions.checkArgument(!clazz.isInterface() && !Modifier.isAbstract(clazz.getModifiers()),

@@ -1,7 +1,9 @@
 package com.cleanroommc.kirino.ecs;
 
 import com.cleanroommc.kirino.schemata.collections.ObjectArrayView;
+import com.google.common.base.Preconditions;
 import org.joml.*;
+
 import java.lang.invoke.MethodType;
 import java.util.*;
 
@@ -30,12 +32,12 @@ enum ScalarType {
 
     ScalarType(Class<?> clazz, FlattenedScalarType primitiveType, int unitCount, String... fields) {
         this.clazz = clazz;
-        this.boxedClass = MethodType.methodType(clazz).wrap().returnType();
+        boxedClass = MethodType.methodType(clazz).wrap().returnType();
         this.primitiveType = primitiveType;
         this.unitCount = unitCount;
         FlattenedScalarType[] types = new FlattenedScalarType[unitCount];
         Arrays.fill(types, primitiveType);
-        this.flattenedTypes = ObjectArrayView.copyOf(types);
+        flattenedTypes = ObjectArrayView.copyOf(types);
         sortedNames = fields.clone();
         Arrays.sort(sortedNames);
         ordinals = new int[fields.length];
@@ -45,28 +47,37 @@ enum ScalarType {
         fieldNames = fields.length == 0 ? null : sortedNames.clone();
     }
 
-    public boolean isSingular() { return ordinals.length == 0; }
+    public boolean isSingular() {
+        return ordinals.length == 0;
+    }
 
     public int ordinalOffsetOfField(String field) {
-        Objects.requireNonNull(field);
+        Preconditions.checkNotNull(field);
+
         int index = Arrays.binarySearch(sortedNames, field);
         return index < 0 ? -1 : ordinals[index];
     }
 
     public Object newScalar(Object... args) {
-        Objects.requireNonNull(args);
-        if (args.length != unitCount) { return null; }
-        for (Object arg : args) {
-            if (!primitiveType.boxedClass.isInstance(arg)) { return null; }
+        Preconditions.checkNotNull(args);
+
+        if (args.length != unitCount) {
+            return null;
         }
+
+        for (Object arg : args) {
+            if (!primitiveType.boxedClass.isInstance(arg)) {
+                return null;
+            }
+        }
+
         return ScalarCodec.create(this, new ArrayValues(args), 0, 0);
     }
 
     public Object[] flattenScalar(Object instance) {
-        Objects.requireNonNull(instance);
-        if (!boxedClass.isInstance(instance)) {
-            throw new IllegalArgumentException("Expected " + boxedClass.getName() + ", got " + instance.getClass().getName());
-        }
+        Preconditions.checkNotNull(instance);
+        Preconditions.checkArgument(boxedClass.isInstance(instance), "Expected type %s, got %s.", boxedClass, instance.getClass());
+
         Object[] result = new Object[unitCount];
         ScalarCodec.write(this, instance, new ArrayValues(result), 0, 0);
         return result;

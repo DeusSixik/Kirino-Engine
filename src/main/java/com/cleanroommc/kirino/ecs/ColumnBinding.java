@@ -2,12 +2,17 @@ package com.cleanroommc.kirino.ecs;
 
 import com.cleanroommc.kirino.ecs.api.storage.PrimitiveArray;
 import com.cleanroommc.kirino.ecs.api.storage.PrimitiveArrayType;
+import com.google.common.base.Preconditions;
 
-import java.util.Objects;
-
+/**
+ * Owns a component layout's live columns within one pool.
+ */
 final class ColumnBinding implements PrimitiveValues {
     final SchemaLayout layout;
     final ObjectCodec codec;
+    /**
+     * Column wrappers in layout ordinal order. Their backing arrays may change on resize.
+     */
     final HeapPrimitiveArray[] columns;
     final int componentIndex;
 
@@ -24,11 +29,19 @@ final class ColumnBinding implements PrimitiveValues {
         }
     }
 
+    /**
+     * Resolves a column descriptor against these live columns.
+     *
+     * @param column Descriptor owned by this binding's exact layout.
+     * @return The live wrapper for the ordinal.
+     * @throws IllegalArgumentException If the descriptor does not belong to the layout.
+     */
     PrimitiveArray column(SchemaLayout.Column column) {
-        Objects.requireNonNull(column);
+        Preconditions.checkNotNull(column);
         if (column.ordinal() >= columns.length || layout.columns().elements()[column.ordinal()] != column) {
-            throw new IllegalArgumentException("Column doesn't belong to " + layout.name());
+            throw new IllegalArgumentException("Column doesn't belong to " + layout.name() + ".");
         }
+
         return columns[column.ordinal()];
     }
 

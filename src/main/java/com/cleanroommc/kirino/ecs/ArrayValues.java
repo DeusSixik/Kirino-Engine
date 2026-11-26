@@ -1,12 +1,12 @@
 package com.cleanroommc.kirino.ecs;
 
-import java.util.Objects;
+import com.google.common.base.Preconditions;
 
 final class ArrayValues implements PrimitiveValues {
     private final Object[] values;
 
     public ArrayValues(Object[] values) {
-        this.values = Objects.requireNonNull(values);
+        this.values = Preconditions.checkNotNull(values);
     }
 
     public byte getByte(int column, int row) {
