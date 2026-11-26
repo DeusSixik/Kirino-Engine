@@ -27,8 +27,9 @@ public final class ResourceStorage {
 
     public <T> boolean isResourceSealed(@NonNull ResourceSlot<T> slot) {
         Preconditions.checkNotNull(slot);
-        Preconditions.checkState(has(slot),
-                "Resource \"%s\" isn't in the storage yet.", slot.toString());
+        if (!has(slot)) {
+            throw new IllegalStateException("Resource \"" + slot + "\" isn't in the storage yet.");
+        }
 
         return isResourceSealedInternal(slot);
     }
@@ -38,18 +39,14 @@ public final class ResourceStorage {
             return true;
         }
 
-        Boolean result = resourceSealed.get((Integer) slot.id());
-        if (result == null) {
-            return false;
-        }
-
-        return result;
+        return resourceSealed.get(slot.id());
     }
 
     public <T> void sealResource(@NonNull ResourceSlot<T> slot) {
         Preconditions.checkNotNull(slot);
-        Preconditions.checkState(has(slot),
-                "Resource \"%s\" isn't in the storage yet.", slot.toString());
+        if (!has(slot)) {
+            throw new IllegalStateException("Resource \"" + slot + "\" isn't in the storage yet.");
+        }
 
         resourceSealed.put(slot.id(), true);
     }
@@ -66,29 +63,33 @@ public final class ResourceStorage {
         Preconditions.checkNotNull(slot);
 
         T result = (T) storage.get(slot.id());
-        Preconditions.checkNotNull(result,
-                "Can't resolve the resource \"%s\".", slot.toString());
-
+        if (result == null) {
+            throw new NullPointerException("Can't resolve the resource \"" + slot + "\".");
+        }
         return result;
     }
 
     public <T> void put(@NonNull ResourceSlot<T> slot, @NonNull T resource) {
-        Preconditions.checkState(!sealed,
-                "The storage is sealed. You are no longer allowed to make changes.");
+        if (sealed) {
+            throw new IllegalStateException("The storage is sealed. You are no longer allowed to make changes.");
+        }
         Preconditions.checkNotNull(slot);
         Preconditions.checkNotNull(resource);
-        Preconditions.checkState(!isResourceSealedInternal(slot),
-                "The resource \"%s\" is sealed. You are no longer allowed to make changes.", slot.toString());
+        if (isResourceSealedInternal(slot)) {
+            throw new IllegalStateException("The resource \"" + slot + "\" is sealed. You are no longer allowed to make changes.");
+        }
 
         storage.put(slot.id(), resource);
     }
 
     public void remove(@NonNull ResourceSlot<?> slot) {
-        Preconditions.checkState(!sealed,
-                "The storage is sealed. You are no longer allowed to make changes.");
+        if (sealed) {
+            throw new IllegalStateException("The storage is sealed. You are no longer allowed to make changes.");
+        }
         Preconditions.checkNotNull(slot);
-        Preconditions.checkState(!isResourceSealedInternal(slot),
-                "The resource \"%s\" is sealed. You are no longer allowed to make changes.", slot.toString());
+        if (isResourceSealedInternal(slot)) {
+            throw new IllegalStateException("The resource \"" + slot + "\" is sealed. You are no longer allowed to make changes.");
+        }
 
         storage.remove(slot.id());
     }
